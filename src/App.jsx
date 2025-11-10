@@ -6,6 +6,7 @@ import HomeCounter from "./pages/admin/counters/HomeCounter";
 import DetailCounter from "./pages/admin/counters/DetailCounter";
 import AddCounter from "./pages/admin/counters/AddCounter";
 import EditCounter from "./pages/admin/counters/EditCounter";
+import DashboardAdmin from "./pages/admin/DashboardAdmin";
 
 // Placeholders
 function AdminDashboard() {
@@ -24,7 +25,7 @@ export default function App() {
       <Route path="/" element={<Navigate to="/admin" replace />} />
 
       <Route path="/admin" element={<AdminLayout />}>
-        <Route index element={<AdminDashboard />} />
+        <Route index element={<DashboardAdmin />} />
 
         <Route path="counters" element={<HomeCounter />} />
         <Route path="counters/new" element={<AddCounter />} />
