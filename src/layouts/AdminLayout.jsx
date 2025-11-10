@@ -1,28 +1,42 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Button } from "primereact/button";
+import { Tooltip } from "primereact/tooltip";
 
 export default function AdminLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [hovering, setHovering] = useState(false);
   const navigate = useNavigate();
 
+  // Expand saat tidak collapsed atau saat di-hover
   const isExpanded = !collapsed || hovering;
 
-  const MenuItem = ({ to, icon, label }) => (
+  const MenuItem = ({ to, icon, label, end = false }) => (
     <NavLink
       to={to}
+      end={end}
       className={({ isActive }) =>
-        `group flex items-center gap-3 px-3 py-2 rounded-lg transition-all
-         ${isActive ? "bg-sky-900/60 text-white" : "text-slate-100 hover:bg-sky-900/40"}`
+        [
+          "menu-item group relative flex items-center gap-3 rounded-lg px-3 py-2 transition-all duration-200 ease-in-out",
+          isActive
+            ? "bg-sky-900/60 text-white shadow-sm"
+            : "text-slate-100 hover:bg-sky-800/40 hover:text-white",
+        ].join(" ")
       }
-      title={label}
+      // Tooltip hanya saat sidebar collapsed (tidak expanded)
+      {...(!isExpanded
+        ? { "data-pr-tooltip": label, "data-pr-position": "right" }
+        : {})}
+      title={isExpanded ? "" : label}
     >
       <i className={`pi ${icon} text-lg`} />
-      {/* Label muncul saat expanded */}
+      {/* Label muncul saat expanded, atau saat item di-hover (bukan saat aside di-hover) */}
       <span
-        className={`whitespace-nowrap transition-opacity duration-150
-        ${isExpanded ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+        className={[
+          "whitespace-nowrap transition-all duration-200 ease-in-out",
+          isExpanded
+            ? "opacity-100 translate-x-0"
+            : "opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0",
+        ].join(" ")}
       >
         {label}
       </span>
@@ -31,13 +45,18 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen flex bg-gray-100">
+      {/* Tooltip global untuk item sidebar saat collapsed */}
+      <Tooltip target=".menu-item[data-pr-tooltip]" showDelay={250} hideDelay={100} />
+
       {/* SIDEBAR */}
       <aside
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
-        className={`flex flex-col justify-between h-screen sticky top-0 transition-all duration-200
-        ${isExpanded ? "w-64" : "w-16"}
-        bg-[#003B73]`}
+        className={[
+          "flex h-screen sticky top-0 flex-col justify-between bg-[#003B73]",
+          "transition-[width] duration-300 ease-in-out",
+          isExpanded ? "w-64" : "w-16",
+        ].join(" ")}
       >
         <div className="p-3">
           {/* Logo + Title */}
@@ -45,14 +64,15 @@ export default function AdminLayout() {
             <img
               src="/mpp.png"
               alt="Mall Pelayanan Publik"
-              className="h-10 w-auto object-contain"
+              className="h-10 w-auto object-contain transition-transform duration-300 ease-in-out"
             />
             <div
-              className={`leading-tight text-slate-50 transition-opacity duration-150
-              ${isExpanded ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+              className={[
+                "leading-tight text-slate-50 transition-all duration-200 ease-in-out",
+                isExpanded ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-1",
+              ].join(" ")}
             >
-              <div className="font-semibold text-sm">Mall Pelayanan</div>
-              <div className="font-semibold text-sm -mt-0.5">Publik</div>
+              <div className="font-semibold text-medium">Mall Pelayanan Publik</div>
             </div>
           </div>
 
@@ -60,7 +80,7 @@ export default function AdminLayout() {
 
           {/* MENU */}
           <nav className="mt-3 flex flex-col gap-1">
-            <MenuItem to="/admin" icon="pi-home" label="Dashboard" />
+            <MenuItem to="/admin" icon="pi-home" label="Dashboard" end />
             <MenuItem to="/admin/counters" icon="pi-headphones" label="Counter" />
             <MenuItem to="/admin/users" icon="pi-users" label="User Management" />
             <MenuItem to="/admin/roles" icon="pi-shield" label="Roles" />
@@ -74,38 +94,32 @@ export default function AdminLayout() {
           {/* Logout */}
           <button
             onClick={() => navigate("/login")}
-            className="group flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left
-            text-slate-100 hover:bg-sky-900/40"
-            title="Logout"
+            className="menu-item group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-slate-100 transition-all hover:bg-sky-800/40"
+            {...(!isExpanded
+              ? { "data-pr-tooltip": "Logout", "data-pr-position": "right" }
+              : {})}
+            title={isExpanded ? "" : "Logout"}
           >
             <i className="pi pi-sign-out text-lg" />
             <span
-              className={`transition-opacity duration-150
-              ${isExpanded ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+              className={[
+                "transition-all duration-200 ease-in-out",
+                isExpanded
+                  ? "opacity-100 translate-x-0"
+                  : "opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0",
+              ].join(" ")}
             >
               Logout
             </span>
           </button>
-
-          {/* Collapse Toggle */}
-          <div className="mt-2 flex justify-end">
-            <Button
-              type="button"
-              onClick={() => setCollapsed((s) => !s)}
-              rounded
-              text
-              plain
-              icon={`pi ${collapsed ? "pi-angle-right" : "pi-angle-left"}`}
-            />
-          </div>
         </div>
       </aside>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex flex-1 flex-col">
         {/* Header */}
         <header className="h-14 bg-white shadow-sm px-4 flex items-center justify-between">
-          <div className="font-medium text-slate-700"></div>
+          <div className="font-medium text-slate-700" />
           <div className="flex items-center gap-3">
             <i className="pi pi-user text-slate-500" />
             <span className="text-sm text-slate-600">Super Admin</span>
