@@ -1,5 +1,4 @@
 import React from "react";
-import { Headphones, Users, CalendarDays } from "lucide-react";
 
 const DashboardAdmin = () => {
   return (
@@ -12,7 +11,7 @@ const DashboardAdmin = () => {
             <p className="text-4xl font-semibold text-teal-700">5</p>
             <p className="text-gray-700 mt-1">Counter</p>
           </div>
-          <Headphones size={48} className="text-teal-600" />
+          <i className="pi pi-headphones text-teal-600 text-5xl"></i>
         </div>
 
         {/* USER */}
@@ -21,7 +20,7 @@ const DashboardAdmin = () => {
             <p className="text-4xl font-semibold text-yellow-600">10</p>
             <p className="text-gray-700 mt-1">User</p>
           </div>
-          <Users size={48} className="text-yellow-500" />
+          <i className="pi pi-users text-yellow-500 text-5xl"></i>
         </div>
 
         {/* ADMIN INFO */}
@@ -30,7 +29,7 @@ const DashboardAdmin = () => {
             <p className="font-semibold text-teal-700 text-lg">Super Admin</p>
             <p className="text-gray-500 text-sm">12 November 2025</p>
           </div>
-          <CalendarDays size={40} className="text-teal-600" />
+          <i className="pi pi-calendar text-teal-600 text-4xl"></i>
         </div>
       </div>
 
@@ -39,7 +38,7 @@ const DashboardAdmin = () => {
         {/* JUMLAH ANTREAN */}
         <div className="bg-white shadow-md rounded-lg p-6">
           <p className="font-semibold text-gray-700 text-lg mb-4 flex gap-2 items-center">
-            👥 Jumlah Antrean Pengunjung Hari Ini
+            <i className="pi pi-users"></i> Jumlah Antrean Pengunjung Hari Ini
           </p>
 
           <div className="space-y-3">
@@ -65,7 +64,7 @@ const DashboardAdmin = () => {
         {/* TABEL ANTREAN SAAT INI */}
         <div className="bg-white shadow-md rounded-lg p-6">
           <p className="font-semibold text-gray-700 text-lg mb-4 flex gap-2 items-center">
-            🧍‍♂️ Antrean Saat Ini
+            <i className="pi pi-list"></i> Antrean Saat Ini
           </p>
 
           <table className="w-full border border-gray-300 text-gray-700">
