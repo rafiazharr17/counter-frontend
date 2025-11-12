@@ -23,7 +23,7 @@ export default function HomeCounter() {
 
   const [deleteCounter, { isLoading: isDeleting }] = useDeleteCounterMutation();
   const [search, setSearch] = useState("");
-  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false); // ✅ State untuk kontrol dialog
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [counterToDelete, setCounterToDelete] = useState(null);
 
   const getCounterNumber = (counterCode) => {
@@ -42,13 +42,11 @@ export default function HomeCounter() {
     );
   }, [counters, search]);
 
-  // ✅ Fungsi untuk menampilkan dialog delete
   const showDeleteDialog = (counter) => {
     setCounterToDelete(counter);
     setDeleteDialogVisible(true);
   };
 
-  // ✅ Fungsi untuk handle delete counter
   const handleDeleteCounter = async () => {
     if (!counterToDelete) return;
 
@@ -128,7 +126,6 @@ export default function HomeCounter() {
     }
   };
 
-  // ✅ Fungsi untuk handle cancel delete (SAMA PERSIS seperti di DetailCounter)
   const handleCancelDelete = () => {
     setDeleteDialogVisible(false);
     toast.current.show({
@@ -167,14 +164,15 @@ export default function HomeCounter() {
 
   const ActionButton = ({ icon, label, color, onClick, disabled = false }) => (
     <button
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation(); // Mencegah event bubbling ke card
+        onClick();
+      }}
       disabled={disabled}
-      className={`flex items-center gap-2 text-xs font-semibold px-2 py-2 rounded-xl 
-      border-2 transition-all duration-300 shadow-sm hover:shadow-lg group
+      className={`flex items-center justify-center gap-1 text-xs font-semibold px-3 py-2 rounded-xl 
+      border-2 transition-all duration-300 shadow-sm hover:shadow-lg group flex-1 min-w-0
       ${
-        color === "detail"
-          ? "border-blue-200 text-blue-600 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-100 hover:border-blue-300 hover:scale-105"
-          : color === "edit"
+        color === "edit"
           ? "border-amber-200 text-amber-600 hover:bg-gradient-to-r hover:from-amber-50 hover:to-amber-100 hover:border-amber-300 hover:scale-105"
           : "border-red-200 text-red-500 hover:bg-gradient-to-r hover:from-red-50 hover:to-red-100 hover:border-red-300 hover:scale-105"
       }
@@ -185,7 +183,7 @@ export default function HomeCounter() {
       }`}>
       <i
         className={`${icon} text-sm group-hover:scale-110 transition-transform duration-300`}></i>
-      {label}
+      <span className="truncate">{label}</span>
     </button>
   );
 
@@ -208,7 +206,7 @@ export default function HomeCounter() {
         contentClassName="!rounded-2xl !backdrop-blur-xl !border-0 !shadow-2xl !overflow-hidden"
       />
 
-      {/* 🟥 PREMIUM CONFIRMATION DIALOG - CONTROLLED VERSION */}
+      {/* 🟥 PREMIUM CONFIRMATION DIALOG */}
       <ConfirmDialog
         visible={deleteDialogVisible}
         onHide={() => setDeleteDialogVisible(false)}
@@ -354,7 +352,7 @@ export default function HomeCounter() {
         </div>
       )}
 
-      {/* Counter Grid */}
+      {/* Counter Grid - CLICKABLE CARDS */}
       {!isLoading && filteredCounters.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredCounters.map((counter) => {
@@ -363,7 +361,10 @@ export default function HomeCounter() {
             return (
               <div
                 key={counter.id}
-                className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-5 shadow-lg shadow-slate-200/20">
+                onClick={() => navigate(`/admin/counters/${counter.id}`)}
+                className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-5 shadow-lg shadow-slate-200/20 flex flex-col h-full cursor-pointer transition-all duration-300 hover:shadow-xl hover:border-slate-300 hover:scale-[1.02] group">
+                
+                {/* Header */}
                 <div className="flex items-start justify-between gap-3 mb-4">
                   <div className="flex-1 min-w-0">
                     <h3 className="text-lg font-bold text-slate-800 group-hover:text-slate-900 transition-colors truncate">
@@ -379,7 +380,8 @@ export default function HomeCounter() {
                   <StatusBadge counterCode={counter.counter_code} />
                 </div>
 
-                <div className="space-y-3 mb-5">
+                {/* Content */}
+                <div className="space-y-3 mb-5 flex-1">
                   <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
                     <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                       <i className="pi pi-users text-blue-600 text-sm" />
@@ -423,24 +425,17 @@ export default function HomeCounter() {
                   )}
                 </div>
 
-                <div className="flex flex-wrap gap-2 justify-between">
-                  <ActionButton
-                    icon="pi pi-eye"
-                    label="Detail"
-                    color="detail"
-                    onClick={() => navigate(`/admin/counters/${counter.id}`)}
-                  />
+                {/* Action Buttons - Hanya Edit dan Hapus */}
+                <div className="flex gap-2 justify-between items-stretch mt-auto">
                   <ActionButton
                     icon="pi pi-pencil"
                     label="Edit"
                     color="edit"
-                    onClick={() =>
-                      navigate(`/admin/counters/${counter.id}/edit`)
-                    }
+                    onClick={() => navigate(`/admin/counters/${counter.id}/edit`)}
                   />
                   <ActionButton
                     icon="pi pi-trash"
-                    label={isDeleting ? "Menghapus..." : "Hapus"}
+                    label={isDeleting ? "..." : "Hapus"}
                     color="delete"
                     disabled={isDeleting}
                     onClick={() => showDeleteDialog(counter)}
