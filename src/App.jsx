@@ -7,6 +7,8 @@ import DetailCounter from "./pages/admin/counters/DetailCounter";
 import AddCounter from "./pages/admin/counters/AddCounter";
 import EditCounter from "./pages/admin/counters/EditCounter";
 import DashboardAdmin from "./pages/admin/DashboardAdmin";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
 
 // Placeholders
 function AdminDashboard() {
@@ -22,7 +24,10 @@ function RolesHome() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/admin" replace />} />
+      <Route path="/" element={<Navigate to="/login" replace />} />
+
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<DashboardAdmin />} />
