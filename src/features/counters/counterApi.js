@@ -1,10 +1,64 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
+/**
+ * Custom baseQuery dengan error adapter supaya error dari Laravel
+ * langsung mudah dipakai di frontend.
+ */
+const baseQuery = fetchBaseQuery({
+  baseUrl: import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1/",
+  prepareHeaders: (headers) => {
+    // Jika nanti butuh token, tinggal tambahkan di sini
+    return headers;
+  },
+});
+
+/**
+ * Wrapper untuk memetakan error Laravel menjadi lebih mudah dibaca
+ */
+const baseQueryWithErrorAdapter = async (args, api, extraOptions) => {
+  const result = await baseQuery(args, api, extraOptions);
+
+  if (result.error) {
+    const status = result.error.status;
+    const data = result.error.data;
+
+    // Laravel Validation Error (422)
+    if (status === 422 && data?.errors) {
+      return {
+        error: {
+          status,
+          message: data.message || "Validasi gagal.",
+          fieldErrors: data.errors, // ← penting!
+        },
+      };
+    }
+
+    // Laravel Not Found (404)
+    if (status === 404) {
+      return {
+        error: {
+          status,
+          message: data?.message || "Data tidak ditemukan.",
+        },
+      };
+    }
+
+    // Other server error
+    return {
+      error: {
+        status,
+        message:
+          data?.message || "Terjadi kesalahan pada server. Silakan coba lagi.",
+      },
+    };
+  }
+
+  return result;
+};
+
 export const counterApi = createApi({
   reducerPath: "counterApi",
-  baseQuery: fetchBaseQuery({
-    baseUrl: import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1/",
-  }),
+  baseQuery: baseQueryWithErrorAdapter, // pakai adapter
   tagTypes: ["Counters"],
   endpoints: (builder) => ({
     // LIST
@@ -21,14 +75,13 @@ export const counterApi = createApi({
       providesTags: (result, error, id) => [{ type: "Counters", id }],
     }),
 
-    // STATISTICS (hasil langsung objek statistik)
+    // STATISTICS
     getCounterStatistics: builder.query({
-      // args: { id, date }
       query: ({ id, date }) => {
         const qs = date ? `?date=${date}` : "";
         return `counters/${id}/statistics${qs}`;
       },
-      transformResponse: (response) => response.data, // ⬅ perbaikan di sini
+      transformResponse: (response) => response.data,
       providesTags: (result, error, { id, date }) => [
         { type: "Counters", id: `stats:${id}:${date || "today"}` },
       ],
@@ -56,6 +109,15 @@ export const counterApi = createApi({
         { type: "Counters", id },
       ],
     }),
+
+    // DELETE
+    deleteCounter: builder.mutation({
+      query: (id) => ({
+        url: `counters/${id}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: ["Counters"],
+    }),
   }),
 });
 
@@ -65,4 +127,5 @@ export const {
   useGetCounterStatisticsQuery,
   useAddCounterMutation,
   useUpdateCounterMutation,
+  useDeleteCounterMutation,
 } = counterApi;
