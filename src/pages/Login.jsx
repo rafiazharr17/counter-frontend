@@ -120,20 +120,23 @@ const Login = () => {
                     ? "bg-sky-900 border-sky-900"
                     : "border-sky-900/60 bg-white"
                 }`}
-                onClick={() => setChecked(!checked)}>
+                onClick={() => setChecked(!checked)}
+              >
                 {checked && (
                   <i className="pi pi-check text-white text-xs font-bold"></i>
                 )}
               </div>
               <label
                 className="text-sky-900/80 cursor-pointer font-medium text-sm"
-                onClick={() => setChecked(!checked)}>
+                onClick={() => setChecked(!checked)}
+              >
                 Remember me
               </label>
             </div>
             <a
               href="#"
-              className="font-medium text-sky-900/80 hover:text-sky-900 transition hover:underline">
+              className="font-medium text-sky-900/80 hover:text-sky-900 transition hover:underline"
+            >
               Forgot password?
             </a>
           </div>
@@ -152,8 +155,20 @@ const Login = () => {
             Don't have an account?{" "}
             <a
               href="/register"
-              className="text-sky-900/80 font-semibold hover:text-sky-900 transition hover:underline">
+              className="text-sky-900/80 font-semibold hover:text-sky-900 transition hover:underline"
+            >
               Register
+            </a>
+          </p>
+
+          {/* Guest Link */}
+          <p className="text-center text-sm text-gray-600 mt-4">
+            Are you a guest?{" "}
+            <a
+              href="/ambil-antrean"
+              className="text-sky-900/80 font-semibold hover:text-sky-900 transition hover:underline"
+            >
+              Yes
             </a>
           </p>
         </form>
