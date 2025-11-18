@@ -10,6 +10,10 @@ import DashboardAdmin from "./pages/admin/DashboardAdmin";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AmbilAntrean from "./pages/guest/AmbilAntrean";
+import DashboardCS from "./pages/cs/DashboardCS";
+import EditCS from "./pages/cs/EditCS";
+import DetailCS from "./pages/cs/DetailCS";
+import DisplayScreen from "./pages/cs/DisplayScreen";
 
 // Placeholders
 function AdminDashboard() {
@@ -30,6 +34,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
+      {/* ADMIN */}
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<DashboardAdmin />} />
 
@@ -41,7 +46,15 @@ export default function App() {
         <Route path="users" element={<UsersHome />} />
         <Route path="roles" element={<RolesHome />} />
       </Route>
-      <Route path="ambil-antrean" element={<AmbilAntrean />} />
+
+      {/* CUSTOMER SERVICE */}
+      <Route path="/cs" element={<DashboardCS />} />
+      <Route path="/cs/:id/edit" element={<EditCS />} />
+      <Route path="/cs/:id" element={<DetailCS />} />
+      <Route path="/cs/display" element={<DisplayScreen />} />
+
+      {/* GUEST */}
+      <Route path="/ambil-antrean" element={<AmbilAntrean />} />
 
       <Route path="*" element={<div>404 Not Found</div>} />
     </Routes>
