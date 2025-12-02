@@ -1,94 +1,838 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
+import { DataTable } from "primereact/datatable";
+import { Column } from "primereact/column";
+import { Calendar } from "primereact/calendar";
+import { useGetCounterQuery } from "../../features/counters/counterApi";
+import {
+  useGetQueuesByCounterQuery,
+  useCallQueueMutation,
+  useServeQueueMutation,
+  useDoneQueueMutation,
+  useCancelQueueMutation,
+  useCallNextQueueMutation,
+} from "../../features/queues/queueApi";
+
+// Helper functions dari DetailCounter.jsx
+function toYMD(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatDurationId(seconds) {
+  if (seconds == null || Number.isNaN(seconds) || seconds < 0) return "-";
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  if (h > 0) return `${h} jam${m ? ` ${m} menit` : ""}`;
+  if (m > 0) return `${m} menit${ss ? ` ${ss} detik` : ""}`;
+  return `${ss} detik`;
+}
 
 export default function DetailCS() {
   const navigate = useNavigate();
   const { id } = useParams();
 
-  // Dummy data
-  const counters = [
-    {
-      id: 1,
-      name: "BPJS",
-      counter_code: "BP-001",
-      quota: "100 / hari",
-      schedule_start: "08:00:00",
-      schedule_end: "15:00:00",
-      description:
-        "Layanan pembuatan kartu BPJS, informasi kepesertaan, dan konsultasi.",
-    },
-    {
-      id: 2,
-      name: "Samsat",
-      counter_code: "SM-002",
-      quota: "80 / hari",
-      schedule_start: "09:00:00",
-      schedule_end: "14:00:00",
-      description:
-        "Layanan administrasi kendaraan bermotor dan pembayaran pajak.",
-    },
-    {
-      id: 3,
-      name: "Pelayanan Pajak Bumi dan Bangunan",
-      counter_code: "PBB-003",
-      quota: "120 / hari",
-      schedule_start: "08:30:00",
-      schedule_end: "15:30:00",
-      description: "Layanan pembayaran dan konsultasi Pajak Bumi dan Bangunan.",
-    },
-  ];
+  // API calls
+  const {
+    data: counterData,
+    isLoading: counterLoading,
+    error: counterError,
+  } = useGetCounterQuery({ id });
 
   const [data, setData] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const ymd = useMemo(() => toYMD(selectedDate), [selectedDate]);
+
+  // Queue API hooks dengan polling untuk realtime updates
+  const {
+    data: queuesData = [],
+    isLoading: queuesLoading,
+    error: queuesError,
+    refetch: refetchQueues,
+  } = useGetQueuesByCounterQuery(
+    { counterId: id, date: ymd },
+    {
+      pollingInterval: 30000, // Refresh setiap 30 detik
+      refetchOnMountOrArgChange: true,
+    }
+  );
+
+  // Queue mutations dengan optimised refetch
+  const [callQueue] = useCallQueueMutation();
+  const [serveQueue] = useServeQueueMutation();
+  const [doneQueue] = useDoneQueueMutation();
+  const [cancelQueue] = useCancelQueueMutation();
+  const [callNextQueue] = useCallNextQueueMutation();
+
+  // Loading states untuk masing-masing action
+  const [isCalling, setIsCalling] = useState(false);
+  const [isServing, setIsServing] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isCallingNext, setIsCallingNext] = useState(false);
+
+  // State untuk antrian yang sedang diproses
+  const [processingQueueId, setProcessingQueueId] = useState(null);
 
   // POPUP
   const [visible, setVisible] = useState(false);
   const [popupMessage, setPopupMessage] = useState("");
+
+  // Audio state
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [voices, setVoices] = useState([]);
+
+  // State untuk waktu realtime
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Ref untuk force refresh
+  const refreshTimeoutRef = useRef(null);
 
   const showPopup = (msg) => {
     setPopupMessage(msg);
     setVisible(true);
   };
 
+  // Cleanup timeouts
   useEffect(() => {
-    const selected = counters.find((c) => c.id === Number(id));
-    setData(selected);
-    window.scrollTo(0, 0);
-  }, [id]);
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (counterData) {
+      setData(counterData);
+      window.scrollTo(0, 0);
+    }
+  }, [counterData]);
+
+  // Timer untuk update waktu realtime
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Load voices ketika component mount
+  useEffect(() => {
+    const loadVoices = () => {
+      const availableVoices = window.speechSynthesis.getVoices();
+      setVoices(availableVoices);
+
+      if (availableVoices.length === 0) {
+        setTimeout(() => {
+          const voicesAfterDelay = window.speechSynthesis.getVoices();
+          setVoices(voicesAfterDelay);
+        }, 1000);
+      }
+    };
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    } else {
+      console.warn("Speech synthesis not supported");
+    }
+
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  // Helper function untuk mengurutkan antrian berdasarkan nomor
+  const sortQueues = (queues) => {
+    return [...queues].sort((a, b) => {
+      const getQueueNumber = (queueNum) => {
+        if (!queueNum) return 0;
+        const parts = queueNum.split("-");
+        return parseInt(parts[parts.length - 1]) || 0;
+      };
+
+      const numA = getQueueNumber(a.queue_number);
+      const numB = getQueueNumber(b.queue_number);
+
+      return numA - numB;
+    });
+  };
+
+  // Filter queues untuk counter ini - DIPERBAIKI sesuai DetailCounter.jsx
+  const filteredQueues = useMemo(() => {
+    if (!queuesData) return [];
+
+    let queuesArray = [];
+
+    if (Array.isArray(queuesData)) {
+      queuesArray = queuesData;
+    } else if (queuesData.data && Array.isArray(queuesData.data)) {
+      queuesArray = queuesData.data;
+    } else if (queuesData.data) {
+      queuesArray = [queuesData.data];
+    }
+
+    const filtered = queuesArray.filter((queue) => {
+      const queueCounterId = queue.counter_id || queue.counter?.id;
+      return queueCounterId == id;
+    });
+
+    return sortQueues(filtered);
+  }, [queuesData, id]);
+
+  // Process queues data untuk tabel riwayat - SEPERTI DI DETAILCOUNTER.JSX
+  const processedQueues = useMemo(() => {
+    if (!filteredQueues || !Array.isArray(filteredQueues)) return [];
+
+    return filteredQueues
+      .filter((queue) => {
+        // Filter berdasarkan tanggal dari queue_number
+        if (!queue.queue_number) return false;
+
+        try {
+          const parts = queue.queue_number.split("-");
+          if (parts.length < 3) return false;
+
+          const dateNum = parts[2];
+          if (!dateNum || dateNum.length !== 8) return false;
+
+          const extractedYmd =
+            dateNum.slice(0, 4) +
+            "-" +
+            dateNum.slice(4, 6) +
+            "-" +
+            dateNum.slice(6, 8);
+
+          return extractedYmd === ymd;
+        } catch (error) {
+          console.error(
+            "Error parsing queue number:",
+            queue.queue_number,
+            error
+          );
+          return false;
+        }
+      })
+      .map((queue) => {
+        // Format data untuk tabel
+        return {
+          id: queue.id,
+          queue_number: queue.queue_number,
+          created_at: queue.created_at || null,
+          called_at: queue.called_at || null,
+          served_at: queue.served_at || null,
+          done_at: queue.done_at || null,
+          canceled_at: queue.canceled_at || null,
+          status: queue.status || null,
+          updated_at: queue.updated_at || null,
+        };
+      })
+      .sort((a, b) => {
+        // Urutkan berdasarkan waktu created_at (terlama ke terbaru)
+        const timeA = a.created_at ? new Date(a.created_at) : new Date(0);
+        const timeB = b.created_at ? new Date(b.created_at) : new Date(0);
+        return timeA - timeB;
+      });
+  }, [filteredQueues, ymd]);
+
+  // Status queues untuk bagian operasional
+  const waitingQueues = useMemo(() => {
+    const waiting = filteredQueues.filter(
+      (queue) => queue.status === "waiting" || queue.status === "called"
+    );
+    return sortQueues(waiting);
+  }, [filteredQueues]);
+
+  const activeQueues = useMemo(() => {
+    return filteredQueues.filter((queue) => queue.status === "served");
+  }, [filteredQueues]);
+
+  const currentServingQueue = useMemo(() => {
+    return filteredQueues.find((queue) => queue.status === "served");
+  }, [filteredQueues]);
+
+  // Get next queue to call
+  const nextQueue = waitingQueues[0];
+
+  // Get called queue (yang sudah dipanggil tapi belum dilayani)
+  const calledQueue = useMemo(() => {
+    return filteredQueues.find(
+      (queue) =>
+        queue.status === "called" &&
+        queue.status !== "served" &&
+        queue.status !== "done" &&
+        queue.status !== "canceled"
+    );
+  }, [filteredQueues]);
+
+  // ==================== STATISTIK HARIAN ====================
+
+  // Hitung statistik manual dari queues
+  const displayStats = useMemo(() => {
+    const total = processedQueues.length;
+    const done = processedQueues.filter((q) => q.status === "done").length;
+    const canceled = processedQueues.filter(
+      (q) => q.status === "canceled"
+    ).length;
+
+    // Hitung rata-rata durasi sederhana
+    let totalDuration = 0;
+    let durationCount = 0;
+
+    processedQueues.forEach((queue) => {
+      if (queue.status === "done" && queue.called_at && queue.done_at) {
+        const calledTime = new Date(queue.called_at);
+        const doneTime = new Date(queue.done_at);
+        const duration = (doneTime - calledTime) / (1000 * 60); // dalam menit
+        totalDuration += duration;
+        durationCount++;
+      }
+    });
+
+    const avgDuration =
+      durationCount > 0 ? Math.round(totalDuration / durationCount) : 0;
+
+    return {
+      total,
+      done,
+      canceled,
+      avgDuration,
+      durationCount,
+    };
+  }, [processedQueues]);
+
+  // ==================== FUNGSI UNTUK CARD TELAH DILAYANI ====================
+
+  // Antrian yang sedang dilayani
+  const currentlyServing = useMemo(() => {
+    return filteredQueues.filter((queue) => queue.status === "served");
+  }, [filteredQueues]);
+
+  // Hitung waktu berjalan untuk antrian yang sedang dilayani
+  const calculateServiceDuration = (queue) => {
+    if (!queue.served_at) return "00:00:00";
+
+    const startTime = new Date(queue.served_at);
+    const now = new Date();
+    const diffMs = now - startTime;
+
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+    return `${hours.toString().padStart(2, "0")}:${minutes
+      .toString()
+      .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  // Hitung estimasi waktu tunggu untuk antrian berikutnya
+  const calculateEstimatedWaitTime = (queue, index) => {
+    if (!queue.created_at) return "00:00:00";
+
+    const baseWaitTime = 5;
+    const estimatedMinutes = (index + 1) * baseWaitTime;
+
+    const hours = Math.floor(estimatedMinutes / 60);
+    const minutes = estimatedMinutes % 60;
+
+    if (hours > 0) {
+      return `${hours} jam ${minutes} menit`;
+    }
+    return `${minutes} menit`;
+  };
+
+  // ==================== FUNGSI WAKTU REALTIME UNTUK ANTRIAN ====================
+
+  // Hitung waktu menunggu realtime dalam format HH:MM:SS
+  const calculateRealtimeWaiting = (queue) => {
+    if (!queue.created_at) return "00:00:00";
+
+    const startTime = new Date(queue.created_at);
+    const now = new Date();
+    const diffMs = now - startTime;
+
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+    return `${hours.toString().padStart(2, "0")}:${minutes
+      .toString()
+      .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  // ==================== FUNGSI UNTUK KLIK ANTRIAN ====================
+
+  // Fungsi untuk memanggil antrian yang diklik
+  const handleCallQueue = async (queue) => {
+    if (!queue) return;
+
+    try {
+      setProcessingQueueId(queue.id);
+      setIsCalling(true);
+
+      await callQueue(queue.id).unwrap();
+      await playCallAudio(queue.queue_number, data.name, data.counter_code);
+
+      // Force refresh setelah 500ms
+      refreshTimeoutRef.current = setTimeout(() => {
+        refetchQueues();
+      }, 500);
+
+      showPopup(`Memanggil antrian ${formatQueueNumber(queue.queue_number)}`);
+    } catch (error) {
+      console.error("Error memanggil antrian:", error);
+      showPopup(
+        `Gagal memanggil antrian: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setProcessingQueueId(null);
+      setIsCalling(false);
+    }
+  };
+
+  // Fungsi untuk mencari voice Google Bahasa Indonesia perempuan
+  const findFemaleIndonesianVoice = () => {
+    if (!voices || voices.length === 0) return null;
+
+    // 1. Cari suara Indonesia perempuan (target utama)
+    const indoFemale = voices.find(
+      (voice) =>
+        voice.lang.toLowerCase().startsWith("id") &&
+        !voice.name.toLowerCase().includes("male") &&
+        !voice.name.toLowerCase().includes("pria") &&
+        !voice.name.toLowerCase().includes("laki")
+    );
+
+    if (indoFemale) return indoFemale;
+
+    // 2. Jika tidak ada suara Indonesia **perempuan**,
+    //    maka jangan pakai suara Indonesia LAKI-LAKI.
+    //    Ambil suara PEREMPUAN apa pun.
+    const anyFemale = voices.find(
+      (voice) =>
+        !voice.name.toLowerCase().includes("male") &&
+        !voice.name.toLowerCase().includes("pria") &&
+        !voice.name.toLowerCase().includes("laki")
+    );
+
+    if (anyFemale) return anyFemale;
+
+    // 3. Fallback terakhir: pilih suara pertama
+    return voices[0];
+  };
+
+  // Fungsi untuk mendapatkan nomor loket dari counter_code
+  const getCounterNumber = (counterCode) => {
+    if (!counterCode) return "0";
+    const parts = counterCode.split("-");
+    return parts.length > 1 ? parts[1] : "0";
+  };
+
+  // Fungsi untuk memutar audio panggilan dengan suara perempuan Indonesia
+  const playCallAudio = async (queueNumber, counterName, counterCode) => {
+    try {
+      setIsPlayingAudio(true);
+
+      // Format nomor antrian: sebutkan per karakter (huruf/angka)
+      const formatNumberForSpeech = (num) => {
+        if (!num || typeof num !== "string") return "nomor tidak diketahui";
+
+        // Ambil 6 karakter pertama dan 3 karakter terakhir
+        const cleanNum = num.replace(/\s+/g, "");
+        let finalNumber = cleanNum;
+
+        if (cleanNum.length > 9) {
+          const firstPart = cleanNum.substring(0, 6);
+          const lastPart = cleanNum.substring(cleanNum.length - 3);
+          finalNumber = firstPart + lastPart;
+        }
+
+        // Pisahkan setiap karakter dengan spasi untuk diucapkan satu per satu
+        return finalNumber.split("").join(" ");
+      };
+
+      // Format nama counter untuk pengucapan yang lebih jelas
+      const formatCounterName = (name) => {
+        if (!name) return "loket";
+        // Hilangkan karakter khusus dan ucapkan per kata
+        return name.replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ");
+      };
+
+      const formattedNumber = formatNumberForSpeech(queueNumber);
+      const formattedCounter = formatCounterName(counterName);
+      const counterNumber = getCounterNumber(counterCode);
+
+      // Text yang akan diucapkan - MENYEBUTKAN NAMA PELAYANAN DAN NOMOR LOKET
+      const textToSpeak = `Nomor antrian ${formattedNumber}, untuk layanan ${formattedCounter}, silakan menuju loket ${counterNumber}`;
+
+      console.log("Memanggil antrian:", {
+        original: queueNumber,
+        formatted: formattedNumber,
+        service: formattedCounter,
+        counter: counterNumber,
+        textToSpeak,
+      });
+
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+        utterance.lang = "id-ID";
+        utterance.rate = 0.7; // Kecepatan sedang untuk kejelasan
+        utterance.pitch = 9; // Pitch sedikit lebih tinggi untuk suara perempuan
+        utterance.volume = 1;
+
+        const selectedVoice = findFemaleIndonesianVoice();
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+          console.log(
+            "Using voice:",
+            selectedVoice.name,
+            "Language:",
+            selectedVoice.lang
+          );
+        } else {
+          console.warn("No suitable voice found, using default settings");
+        }
+
+        utterance.onend = () => {
+          setIsPlayingAudio(false);
+          console.log("Audio panggilan selesai");
+        };
+
+        utterance.onerror = (event) => {
+          console.error("Error dalam speech synthesis:", event);
+          setIsPlayingAudio(false);
+          const formattedNumber = formatNumberForSpeech(queueNumber);
+          const counterNumber = getCounterNumber(counterCode);
+          showPopup(
+            `Nomor antrian ${formattedNumber}, untuk layanan ${counterName}, silakan menuju loket ${counterNumber}`
+          );
+        };
+
+        // Tunggu sebentar sebelum memulai speech untuk memastikan voices loaded
+        setTimeout(() => {
+          window.speechSynthesis.speak(utterance);
+        }, 200);
+      } else {
+        throw new Error("Browser tidak mendukung text-to-speech");
+      }
+    } catch (error) {
+      console.error("Error memutar audio:", error);
+      setIsPlayingAudio(false);
+      const formattedNumber = formatNumberForSpeech(queueNumber);
+      const counterNumber = getCounterNumber(counterCode);
+      showPopup(
+        `Nomor antrian ${formattedNumber}, untuk layanan ${counterName}, silakan menuju loket ${counterNumber}`
+      );
+    }
+  };
+
+  // ==================== FUNGSI UTAMA YANG DIPERBAIKI ====================
+
+  const handleCallAgain = async () => {
+    const queueToCall = currentServingQueue || calledQueue || nextQueue;
+
+    if (!queueToCall) {
+      showPopup("Tidak ada antrian yang dapat dipanggil ulang");
+      return;
+    }
+
+    try {
+      setIsCalling(true);
+      await callQueue(queueToCall.id).unwrap();
+      await playCallAudio(
+        queueToCall.queue_number,
+        data.name,
+        data.counter_code
+      );
+
+      refreshTimeoutRef.current = setTimeout(() => {
+        refetchQueues();
+      }, 500);
+
+      showPopup(
+        `Memanggil ulang antrian ${formatQueueNumber(queueToCall.queue_number)}`
+      );
+    } catch (error) {
+      console.error("Error memanggil ulang:", error);
+      showPopup(
+        `Gagal memanggil ulang: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setIsCalling(false);
+    }
+  };
+
+  const handleServeQueue = async () => {
+    const queueToServe = calledQueue || nextQueue;
+
+    if (!queueToServe) {
+      showPopup("Tidak ada antrian yang dapat dilayani");
+      return;
+    }
+
+    try {
+      setIsServing(true);
+
+      // Jika antrian belum dipanggil, panggil dulu
+      if (queueToServe.status === "waiting") {
+        await callQueue(queueToServe.id).unwrap();
+        // Tunggu sebentar untuk memastikan data ter-update
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      // Update status antrian menjadi 'served'
+      await serveQueue(queueToServe.id).unwrap();
+
+      // Force immediate refresh
+      await refetchQueues();
+
+      showPopup(
+        `Memulai layanan untuk antrian ${formatQueueNumber(
+          queueToServe.queue_number
+        )}`
+      );
+    } catch (error) {
+      console.error("Error memulai layanan:", error);
+      showPopup(
+        `Gagal memulai layanan: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setIsServing(false);
+    }
+  };
+
+  const handleDoneQueue = async () => {
+    const queueToComplete = currentServingQueue;
+
+    if (!queueToComplete) {
+      showPopup("Tidak ada antrian yang sedang dilayani");
+      return;
+    }
+
+    try {
+      setIsCompleting(true);
+
+      const queueNumber = formatQueueNumber(queueToComplete.queue_number);
+
+      console.log("Menyelesaikan antrian:", queueToComplete.id, queueNumber);
+
+      // Step 1: Update status menjadi 'done'
+      await doneQueue(queueToComplete.id).unwrap();
+
+      // Step 2: Immediate refresh pertama
+      await refetchQueues();
+
+      // Step 3: Refresh kedua setelah delay kecil untuk memastikan cache ter-update
+      refreshTimeoutRef.current = setTimeout(async () => {
+        await refetchQueues();
+        console.log("Second refresh completed for:", queueNumber);
+      }, 200);
+
+      showPopup(`Menyelesaikan layanan untuk antrian ${queueNumber}`);
+    } catch (error) {
+      console.error("Error menyelesaikan layanan:", error);
+      showPopup(
+        `Gagal menyelesaikan layanan: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handleCancelQueue = async () => {
+    const queueToCancel = currentServingQueue || calledQueue || nextQueue;
+
+    if (!queueToCancel) {
+      showPopup("Tidak ada antrian yang dapat dibatalkan");
+      return;
+    }
+
+    try {
+      setIsCancelling(true);
+      await cancelQueue(queueToCancel.id).unwrap();
+
+      refreshTimeoutRef.current = setTimeout(() => {
+        refetchQueues();
+      }, 500);
+
+      showPopup(
+        `Membatalkan antrian ${formatQueueNumber(queueToCancel.queue_number)}`
+      );
+    } catch (error) {
+      console.error("Error membatalkan antrian:", error);
+      showPopup(
+        `Gagal membatalkan antrian: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const handleCallNextGlobal = async () => {
+    try {
+      setIsCallingNext(true);
+      const result = await callNextQueue(id).unwrap();
+      const calledQueue = result.data || result;
+
+      if (calledQueue) {
+        await playCallAudio(
+          calledQueue.queue_number,
+          data.name,
+          data.counter_code
+        );
+        await refetchQueues();
+        showPopup(
+          `Memanggil antrian ${formatQueueNumber(calledQueue.queue_number)}`
+        );
+      } else {
+        showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+      }
+    } catch (error) {
+      console.error("Error memanggil antrian berikutnya:", error);
+      if (error.status === 404 || error.status === 400) {
+        await handleCallNextManual();
+      } else {
+        showPopup(
+          `Gagal memanggil antrian berikutnya: ${
+            error.data?.message || error.message || "Terjadi kesalahan"
+          }`
+        );
+      }
+    } finally {
+      setIsCallingNext(false);
+    }
+  };
+
+  const handleCallNextManual = async () => {
+    if (!nextQueue) {
+      showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+      return;
+    }
+
+    try {
+      setIsCalling(true);
+      await callQueue(nextQueue.id).unwrap();
+      await playCallAudio(nextQueue.queue_number, data.name, data.counter_code);
+      await refetchQueues();
+      showPopup(
+        `Memanggil antrian ${formatQueueNumber(nextQueue.queue_number)}`
+      );
+    } catch (error) {
+      console.error("Error memanggil antrian:", error);
+      showPopup(
+        `Gagal memanggil antrian: ${
+          error.data?.message || error.message || "Terjadi kesalahan"
+        }`
+      );
+    } finally {
+      setIsCalling(false);
+    }
+  };
+
+  // Cleanup audio ketika component unmount
+  useEffect(() => {
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  // ==================== HELPER FUNCTIONS ====================
+
+  // Helper function untuk format queue number
+  const formatQueueNumber = (queueNumber) => {
+    if (!queueNumber) return "-";
+    const parts = queueNumber.split("-");
+    if (parts.length < 4) return queueNumber;
+    return `${parts[0]}-${parts[1]}-${parts[3]}`;
+  };
+
+  const isLoading = counterLoading || queuesLoading;
+  const isAnyActionLoading =
+    isCalling ||
+    isServing ||
+    isCompleting ||
+    isCancelling ||
+    isCallingNext ||
+    isPlayingAudio;
+
+  // PERBAIKAN: Handle error dengan lebih baik
+  if (counterError) {
+    return (
+      <div className="p-6 text-center text-red-600">
+        Error:{" "}
+        {counterError?.data?.message ||
+          counterError.message ||
+          "Gagal memuat data counter"}
+        <Button
+          label="Kembali"
+          className="mt-4"
+          onClick={() => navigate("/cs")}
+        />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6 text-center text-slate-600">
+        <i className="pi pi-spin pi-spinner text-2xl"></i>
+        <p className="mt-2">Loading detail counter...</p>
+      </div>
+    );
+  }
 
   if (!data) {
     return (
       <div className="p-6 text-center text-slate-600">
-        Loading detail counter...
+        Data counter tidak ditemukan
+        <Button
+          label="Kembali"
+          className="mt-4"
+          onClick={() => navigate("/cs")}
+        />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 bg-gray-100 min-h-screen">
+    <div className="space-y-6 p-4 sm:p-6 bg-gray-100 min-h-screen">
       {/* ================= POPUP ================= */}
       <Dialog
         visible={visible}
         onHide={() => setVisible(false)}
         className="w-80 md:w-96"
         modal
-        closable={false}
-      >
+        closable={false}>
         <div className="text-center py-4">
-          {/* ICON */}
           <span
             className="pi pi-check-circle"
-            style={{ fontSize: "70px", color: "rgb(34 197 94)" }}
-          ></span>
-
-          {/* TITLE */}
-          <h2 className="text-xl font-bold text-slate-800 mt-3">Berhasil!</h2>
-
-          {/* MESSAGE */}
+            style={{ fontSize: "70px", color: "rgb(34 197 94)" }}></span>
+          <h2 className="text-xl font-bold text-slate-800 mt-3">Info</h2>
           <p className="text-slate-500 mt-1">{popupMessage}</p>
-
-          {/* BUTTON KECIL */}
           <div className="flex justify-center">
             <Button
               label="OK"
@@ -98,128 +842,640 @@ export default function DetailCS() {
           </div>
         </div>
       </Dialog>
-      {/* =================================================== */}
 
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-sm border border-slate-200 rounded-2xl p-6 shadow-lg">
-        <h2 className="text-2xl font-bold text-[#004A9F]">
-          Detail Counter — {data.name}
-        </h2>
-        <p className="text-slate-500 mt-1">
-          Informasi lengkap mengenai counter pelayanan
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Button
+              icon="pi pi-arrow-left"
+              className="bg-slate-200 text-slate-700 border-slate-300 rounded-xl px-3 py-2"
+              onClick={() => navigate("/cs")}
+            />
+            <div>
+              <h2 className="text-2xl font-bold text-[#004A9F]">
+                Detail Counter — {data.name}
+              </h2>
+              <p className="text-slate-500 mt-1">
+                Informasi lengkap mengenai counter pelayanan
+              </p>
+            </div>
+          </div>
+
+          {/* Status Info */}
+          <div className="flex items-center gap-4">
+            {queuesError && (
+              <div className="p-2 bg-red-100 border border-red-300 rounded-lg">
+                <p className="text-red-700 text-xs">
+                  Error: {queuesError?.data?.message || queuesError.message}
+                </p>
+              </div>
+            )}
+
+            {currentServingQueue && (
+              <div className="p-3 bg-green-100 border border-green-300 rounded-lg">
+                <p className="text-green-700 text-sm font-semibold">
+                  Sedang Melayani: #
+                  {formatQueueNumber(currentServingQueue.queue_number)}
+                </p>
+              </div>
+            )}
+
+            {calledQueue && !currentServingQueue && (
+              <div className="p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
+                <p className="text-yellow-700 text-sm font-semibold">
+                  Telah Dipanggil: #
+                  {formatQueueNumber(calledQueue.queue_number)}
+                </p>
+              </div>
+            )}
+
+            {isAnyActionLoading && (
+              <div className="p-3 bg-orange-100 border border-orange-300 rounded-lg animate-pulse">
+                <p className="text-orange-700 text-sm font-semibold flex items-center gap-2">
+                  <i className="pi pi-spin pi-spinner"></i>
+                  Memproses...
+                </p>
+              </div>
+            )}
+
+            <Button
+              label="Edit Loket"
+              icon="pi pi-pencil"
+              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white !py-3 !px-4 sm:!px-6 !rounded-xl gap-2 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-0 font-semibold w-full sm:w-auto justify-center"
+              onClick={() => navigate(`/cs/counters/${id}/edit`)}
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT */}
+      {/* ================= INFORMASI LAYANAN - DIUBAH LAYOUT ================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">
+          <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <i className="pi pi-info-circle text-blue-500"></i>
             Informasi Layanan
           </h3>
-
           <div className="space-y-4">
-            <div>
-              <p className="text-sm text-slate-500">Nama Layanan:</p>
-              <p className="font-semibold text-slate-700">{data.name}</p>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-sm text-slate-500">Nama Layanan:</span>
+              <span className="font-semibold text-slate-700">{data.name}</span>
             </div>
-
-            <div>
-              <p className="text-sm text-slate-500">Kode Counter:</p>
-              <p className="font-mono bg-slate-100 inline-block px-3 py-1 rounded-lg text-slate-700">
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-sm text-slate-500">Kode Counter:</span>
+              <span className="font-mono bg-slate-100 px-3 py-1 rounded-lg text-slate-700">
                 {data.counter_code}
-              </p>
+              </span>
             </div>
-
-            <div>
-              <p className="text-sm text-slate-500">Deskripsi:</p>
-              <p className="text-slate-700">{data.description}</p>
+            <div className="flex justify-between items-start py-2 border-b border-slate-100">
+              <span className="text-sm text-slate-500">Deskripsi:</span>
+              <span className="text-slate-700 text-right max-w-xs">
+                {data.description}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-sm text-slate-500">Kuota per Hari:</span>
+              <span className="font-semibold text-slate-700">
+                {data.quota} / hari
+              </span>
             </div>
           </div>
         </div>
 
-        {/* RIGHT */}
+        {/* STATUS ANTRIAN SECTION - DENGAN KLIK UNTUK MEMANGGIL */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4">
-            Jadwal & Kuota
+          <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <i className="pi pi-forward text-blue-500"></i>
+            Akan Dipanggil
+          </h3>
+          {nextQueue ? (
+            <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="text-3xl font-bold text-blue-600 mb-2">
+                #{formatQueueNumber(nextQueue.queue_number)}
+              </div>
+              <p className="text-blue-700 text-sm">Antrian berikutnya</p>
+              <p className="text-blue-500 text-xs mt-1">
+                Status:{" "}
+                {nextQueue.status === "called" ? "Telah Dipanggil" : "Menunggu"}
+              </p>
+              <p className="text-blue-500 text-xs mt-1">
+                Waktu Menunggu: {calculateRealtimeWaiting(nextQueue)}
+              </p>
+            </div>
+          ) : (
+            <div className="text-center p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <i className="pi pi-inbox text-slate-400 text-2xl mb-2"></i>
+              <p className="text-slate-500 text-sm">
+                Tidak ada antrian menunggu
+              </p>
+            </div>
+          )}
+          <div className="mt-4">
+            <p className="text-sm text-slate-600 mb-2">
+              Total Menunggu:{" "}
+              <span className="font-semibold">{waitingQueues.length}</span>
+            </p>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {waitingQueues.slice(0, 5).map((queue) => (
+                <div
+                  key={queue.id}
+                  className={`flex justify-between items-center p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
+                    processingQueueId === queue.id
+                      ? "bg-blue-100 border-blue-300 animate-pulse"
+                      : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-200"
+                  }`}
+                  onClick={() => handleCallQueue(queue)}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-slate-700">
+                      #{formatQueueNumber(queue.queue_number)}
+                    </span>
+                    <span
+                      className={`text-xs px-2 py-1 rounded ${
+                        queue.status === "called"
+                          ? "bg-orange-100 text-orange-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}>
+                      {queue.status === "called" ? "Dipanggil" : "Menunggu"}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs font-mono text-blue-600 font-semibold">
+                      {calculateRealtimeWaiting(queue)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {waitingQueues.length > 5 && (
+                <p className="text-xs text-slate-500 text-center py-2">
+                  +{waitingQueues.length - 5} antrian lainnya
+                </p>
+              )}
+              {waitingQueues.length === 0 && (
+                <p className="text-xs text-slate-500 text-center py-2">
+                  Tidak ada antrian
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ================= CARD TELAH DILAYANI ================= */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <i className="pi pi-users text-green-500"></i>
+            Telah Dilayani
           </h3>
 
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm text-slate-500">Kuota per Hari:</p>
-              <p className="font-semibold text-slate-700">{data.quota}</p>
-            </div>
+          {/* Antrian yang sedang Dilayani */}
+          <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200 mb-4">
+            <h4 className="text-md font-semibold text-green-800 mb-2">
+              Sedang Dilayani
+            </h4>
+            {currentlyServing.length > 0 ? (
+              currentlyServing.map((queue) => (
+                <div key={queue.id} className="space-y-2">
+                  <div className="text-2xl font-bold text-green-600">
+                    #{formatQueueNumber(queue.queue_number)}
+                  </div>
+                  <div className="text-green-700 text-sm font-mono font-semibold">
+                    {calculateServiceDuration(queue)}
+                  </div>
+                  <div className="text-green-600 text-xs">
+                    Mulai:{" "}
+                    {queue.served_at
+                      ? new Date(queue.served_at).toLocaleTimeString("id-ID")
+                      : "-"}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-green-500">
+                <i className="pi pi-clock text-2xl mb-2"></i>
+                <p className="text-sm">
+                  Tidak ada antrian yang sedang dilayani
+                </p>
+              </div>
+            )}
+          </div>
 
-            <div>
-              <p className="text-sm text-slate-500">Jadwal Operasional:</p>
-              <p className="font-semibold text-slate-700">
-                {data.schedule_start} - {data.schedule_end}
-              </p>
+          {/* List Antrian Berikutnya */}
+          <div>
+            <h4 className="text-md font-semibold text-slate-800 mb-3">
+              Antrian Berikutnya ({waitingQueues.length})
+            </h4>
+            <div className="space-y-2 max-h-32 overflow-y-auto">
+              {waitingQueues.length > 0 ? (
+                waitingQueues.slice(0, 5).map((queue, index) => (
+                  <div
+                    key={queue.id}
+                    className={`flex justify-between items-center p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
+                      processingQueueId === queue.id
+                        ? "bg-blue-100 border-blue-300 animate-pulse"
+                        : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-200"
+                    }`}
+                    onClick={() => handleCallQueue(queue)}>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-slate-700">
+                        #{formatQueueNumber(queue.queue_number)}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-1 rounded ${
+                          queue.status === "called"
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}>
+                        {queue.status === "called" ? "Dipanggil" : "Menunggu"}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-mono text-blue-600 font-semibold">
+                        {calculateRealtimeWaiting(queue)}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Estimasi: {calculateEstimatedWaitTime(queue, index)}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center p-4 bg-slate-50 rounded-lg border border-slate-200">
+                  <i className="pi pi-inbox text-slate-400 text-xl mb-2"></i>
+                  <p className="text-slate-500 text-sm">
+                    Tidak ada antrian berikutnya
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* BUTTON SECTION */}
+      {/* Aksi Counter */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-800 mb-4">
           Aksi Counter
         </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <Button
-            label="Panggil"
-            icon="pi pi-volume-up"
-            className="h-12 w-full bg-blue-50 border border-blue-300 text-blue-700 rounded-full font-semibold"
-            onClick={() => showPopup("Memanggil antrian...")}
-          />
-
-          <Button
-            label="Panggil Ulang"
-            icon="pi pi-refresh"
+            label={isCalling ? "Memanggil..." : "Panggil Ulang"}
+            icon={isCalling ? "pi pi-spin pi-spinner" : "pi pi-refresh"}
             className="h-12 w-full bg-indigo-50 border border-indigo-300 text-indigo-700 rounded-full font-semibold"
-            onClick={() => showPopup("Memanggil ulang antrian...")}
+            onClick={handleCallAgain}
+            disabled={
+              !(currentServingQueue || calledQueue || nextQueue) ||
+              isAnyActionLoading
+            }
           />
-
           <Button
-            label="Layani"
-            icon="pi pi-user-check"
+            label={isServing ? "Melayani..." : "Layani"}
+            icon={isServing ? "pi pi-spin pi-spinner" : "pi pi-user-check"}
             className="h-12 w-full bg-green-50 border border-green-300 text-green-700 rounded-full font-semibold"
-            onClick={() => showPopup("Mulai melayani warga...")}
+            onClick={handleServeQueue}
+            disabled={!(calledQueue || nextQueue) || isAnyActionLoading}
           />
-
           <Button
-            label="Selesai"
-            icon="pi pi-check-circle"
+            label={isCompleting ? "Menyelesaikan..." : "Selesai"}
+            icon={isCompleting ? "pi pi-spin pi-spinner" : "pi pi-check-circle"}
             className="h-12 w-full bg-teal-50 border border-teal-300 text-teal-700 rounded-full font-semibold"
-            onClick={() => showPopup("Pelayanan selesai.")}
+            onClick={handleDoneQueue}
+            disabled={!currentServingQueue || isAnyActionLoading}
           />
-
           <Button
-            label="Batal"
-            icon="pi pi-times-circle"
+            label={isCancelling ? "Membatalkan..." : "Batal"}
+            icon={isCancelling ? "pi pi-spin pi-spinner" : "pi pi-times-circle"}
             className="h-12 w-full bg-red-50 border border-red-300 text-red-700 rounded-full font-semibold"
-            onClick={() => showPopup("Antrian dibatalkan.")}
+            onClick={handleCancelQueue}
+            disabled={
+              !(currentServingQueue || calledQueue || nextQueue) ||
+              isAnyActionLoading
+            }
           />
-
           <Button
-            label="Selanjutnya"
-            icon="pi pi-step-forward"
+            label={isCallingNext ? "Memanggil..." : "Selanjutnya"}
+            icon={
+              isCallingNext ? "pi pi-spin pi-spinner" : "pi pi-step-forward"
+            }
             className="h-12 w-full bg-purple-50 border border-purple-300 text-purple-700 rounded-full font-semibold"
-            onClick={() => showPopup("Masuk ke antrian berikutnya...")}
+            onClick={handleCallNextGlobal}
+            disabled={isAnyActionLoading}
           />
         </div>
       </div>
 
-      {/* Kembali */}
-      <div className="text-center pt-4">
-        <Button
-          label="Kembali"
-          icon="pi pi-arrow-left"
-          className="bg-slate-200 text-slate-700 border-slate-300 rounded-xl px-5 py-3"
-          onClick={() => navigate("/cs")}
-        />
+      {/* ================= STATISTIK HARIAN - SEPERTI DI DETAILCOUNTER.JSX ================= */}
+      <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-6 shadow-lg shadow-slate-200/20 backdrop-blur-sm">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+          <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-[#004A9F] to-[#0066CC] bg-clip-text text-transparent drop-shadow-sm">
+            Statistik Harian — {data?.name}
+          </h2>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <i className="pi pi-calendar text-slate-400 flex-shrink-0" />
+            <Calendar
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.value)}
+              dateFormat="yy-mm-dd"
+              showIcon
+              showButtonBar
+              className="custom-calendar !border-2 !border-slate-200 !rounded-xl !bg-white/80 backdrop-blur-sm w-full sm:w-48"
+              inputClassName="!py-3 !rounded-xl px-4 !font-medium !text-slate-700 !placeholder-slate-400 !bg-white/80 backdrop-blur-sm !border-0"
+              panelClassName="!border !border-slate-200 !rounded-xl !shadow-lg"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-3">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+            <div className="text-2xl sm:text-4xl font-bold">
+              {displayStats.total}
+            </div>
+            <div className="text-blue-100 text-xs sm:text-sm font-medium mt-1">
+              Total Antrian
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+            <div className="text-2xl sm:text-4xl font-bold">
+              {displayStats.done}
+            </div>
+            <div className="text-green-100 text-xs sm:text-sm font-medium mt-1">
+              Selesai
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-red-500 to-red-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+            <div className="text-2xl sm:text-4xl font-bold">
+              {displayStats.canceled}
+            </div>
+            <div className="text-red-100 text-xs sm:text-sm font-medium mt-1">
+              Batal
+            </div>
+          </div>
+        </div>
+
+        {queuesError && (
+          <div className="mt-4 p-4 rounded-xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-700 flex items-center gap-3">
+            <i className="pi pi-info-circle text-amber-500 text-xl" />
+            <div>
+              <p className="font-semibold">
+                Menampilkan statistik dari data antrian
+              </p>
+              <p className="text-sm">Untuk tanggal {ymd}</p>
+            </div>
+          </div>
+        )}
+
+        {queuesLoading && (
+          <div className="mt-4 text-center text-slate-500">
+            Memuat statistik...
+          </div>
+        )}
       </div>
+
+      {/* ================= RIWAYAT AKTIVITAS - SEPERTI DI DETAILCOUNTER.JSX ================= */}
+      <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-6 shadow-lg">
+        <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-[#004A9F] to-[#0066CC] bg-clip-text text-transparent mb-4 sm:mb-6">
+          Riwayat Aktivitas ({processedQueues.length} antrean)
+        </h2>
+
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <DataTable
+            value={processedQueues}
+            paginator
+            rows={10}
+            stripedRows
+            size="small"
+            showGridlines
+            className="custom-datatable text-center"
+            paginatorClassName="!border-t !border-slate-200 !bg-slate-50/50 !p-3 !justify-center sticky-paginator"
+            emptyMessage={
+              <div className="text-center py-8 text-slate-500">
+                <i className="pi pi-inbox text-3xl text-slate-300 mb-2" />
+                <p className="font-medium">Tidak ada data aktivitas</p>
+                <p className="text-sm">Untuk tanggal {ymd}</p>
+              </div>
+            }>
+            <Column
+              field="queue_number"
+              header="Nomor Antrian"
+              sortable
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 !border-r !border-slate-200 text-center"
+              bodyClassName="!font-bold !text-slate-800 !text-sm !border-r !border-slate-200 text-center"
+              style={{ minWidth: "120px" }}
+              body={(row) => formatQueueNumber(row.queue_number)}
+            />
+            <Column
+              header="Start"
+              body={(row) =>
+                row.created_at
+                  ? new Date(row.created_at).toLocaleTimeString("id-ID")
+                  : "-"
+              }
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 !border-r !border-slate-200 text-center"
+              bodyClassName="!border-r !border-slate-200 text-center"
+              style={{ minWidth: "80px" }}
+            />
+            <Column
+              header="Dipanggil"
+              body={(row) => {
+                if (!row.called_at || !row.created_at) return "-";
+                const diff =
+                  (new Date(row.called_at) - new Date(row.created_at)) / 1000;
+                return (
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-xs sm:text-sm">
+                      {new Date(row.called_at).toLocaleTimeString("id-ID")}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {formatDurationId(diff)}
+                    </span>
+                  </div>
+                );
+              }}
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 !border-r !border-slate-200 text-center"
+              bodyClassName="!border-r !border-slate-200 text-center"
+              style={{ minWidth: "100px" }}
+            />
+            <Column
+              header="Dilayani"
+              body={(row) => {
+                if (!row.served_at || !row.called_at) return "-";
+                const diff =
+                  (new Date(row.served_at) - new Date(row.called_at)) / 1000;
+                return (
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-xs sm:text-sm">
+                      {new Date(row.served_at).toLocaleTimeString("id-ID")}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {formatDurationId(diff)}
+                    </span>
+                  </div>
+                );
+              }}
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 !border-r !border-slate-200 text-center"
+              bodyClassName="!border-r !border-slate-200 text-center"
+              style={{ minWidth: "100px" }}
+            />
+            <Column
+              header="Selesai"
+              body={(row) => {
+                if (!row.done_at || !row.served_at) return "-";
+                const diff =
+                  (new Date(row.done_at) - new Date(row.served_at)) / 1000;
+                return (
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-xs sm:text-sm">
+                      {new Date(row.done_at).toLocaleTimeString("id-ID")}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {formatDurationId(diff)}
+                    </span>
+                  </div>
+                );
+              }}
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 !border-r !border-slate-200 text-center"
+              bodyClassName="!border-r !border-slate-200 text-center"
+              style={{ minWidth: "100px" }}
+            />
+            <Column
+              header="Batal"
+              body={(row) => {
+                if (!row.canceled_at || !row.created_at) return "-";
+                const diff =
+                  (new Date(row.canceled_at) - new Date(row.created_at)) / 1000;
+                return (
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-xs sm:text-sm">
+                      {new Date(row.canceled_at).toLocaleTimeString("id-ID")}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {formatDurationId(diff)}
+                    </span>
+                  </div>
+                );
+              }}
+              headerClassName="!bg-slate-50 !text-slate-700 !font-bold !border-b !border-slate-200 text-center"
+              bodyClassName="text-center"
+              style={{ minWidth: "100px" }}
+            />
+          </DataTable>
+        </div>
+
+        {queuesLoading && (
+          <p className="text-slate-500 mt-3 text-center">
+            Memuat riwayat aktivitas...
+          </p>
+        )}
+        {queuesError && (
+          <div className="mt-4 p-4 rounded-xl border-2 border-red-200 bg-gradient-to-r from-red-50 to-rose-50 text-red-700 flex items-center gap-3">
+            <i className="pi pi-exclamation-triangle text-red-500 text-xl" />
+            <div>
+              <p className="font-semibold">Gagal memuat riwayat aktivitas</p>
+              <p className="text-sm">Untuk tanggal {ymd}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Custom CSS dari DetailCounter.jsx */}
+      <style>{`
+        .custom-calendar .p-calendar .p-inputtext {
+          border: none !important;
+          background: transparent !important;
+        }
+        .custom-calendar .p-datepicker {
+          border: 1px solid #e2e8f0 !important;
+          border-radius: 12px !important;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1) !important;
+        }
+        .custom-calendar .p-datepicker table td > span {
+          width: 2rem !important;
+          height: 2rem !important;
+        }
+        .custom-calendar .p-datepicker .p-datepicker-header {
+          padding: 0.5rem !important;
+        }
+
+        .custom-datatable .p-datatable-tbody > tr > td {
+          border-right: 1px solid #e2e8f0 !important;
+          text-align: center !important;
+          vertical-align: middle !important;
+        }
+        .custom-datatable .p-datatable-thead > tr > th {
+          border-right: 1px solid #e2e8f0 !important;
+          text-align: center !important;
+          vertical-align: middle !important;
+        }
+        .custom-datatable .p-datatable-tbody > tr > td:last-child {
+          border-right: none !important;
+        }
+        .custom-datatable .p-datatable-thead > tr > th:last-child {
+          border-right: none !important;
+        }
+        .custom-datatable .p-datatable-tbody > tr > td {
+          border-bottom: 1px solid #e2e8f0 !important;
+        }
+        .custom-datatable .p-datatable-thead > tr > th {
+          border-bottom: 1px solid #e2e8f0 !important;
+        }
+
+        .custom-datatable .p-column-header-content {
+          justify-content: center !important;
+          width: 100% !important;
+        }
+        .custom-datatable .p-datatable-thead > tr > th > .p-column-header-content {
+          display: flex !important;
+          justify-content: center !important;
+          align-items: center !important;
+          width: 100% !important;
+        }
+
+        .custom-datatable .p-datatable-wrapper {
+          overflow-x: auto !important;
+        }
+
+        .sticky-paginator {
+          position: relative !important;
+          z-index: 10 !important;
+        }
+
+        .custom-datatable .p-datatable-table {
+          min-width: 800px;
+        }
+
+        @media (min-width: 640px) {
+          .custom-datatable .p-datatable-table {
+            min-width: auto;
+            width: 100%;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .custom-datatable .p-datatable-thead > tr > th {
+            font-size: 0.75rem !important;
+            padding: 0.5rem !important;
+          }
+          .custom-datatable .p-datatable-tbody > tr > td {
+            font-size: 0.75rem !important;
+            padding: 0.5rem !important;
+          }
+          
+          .custom-datatable .p-paginator {
+            padding: 0.5rem !important;
+          }
+          
+          .custom-datatable .p-paginator .p-paginator-current,
+          .custom-datatable .p-paginator .p-paginator-first,
+          .custom-datatable .p-paginator .p-paginator-prev,
+          .custom-datatable .p-paginator .p-paginator-page,
+          .custom-datatable .p-paginator .p-paginator-next,
+          .custom-datatable .p-paginator .p-paginator-last {
+            min-width: 2rem !important;
+            height: 2rem !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
