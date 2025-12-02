@@ -94,6 +94,9 @@ export default function DetailCS() {
   // Ref untuk force refresh
   const refreshTimeoutRef = useRef(null);
 
+  // State untuk sorting riwayat terbaru
+  const [historySortOrder, setHistorySortOrder] = useState("desc"); // "asc" atau "desc"
+
   const showPopup = (msg) => {
     setPopupMessage(msg);
     setVisible(true);
@@ -311,6 +314,87 @@ export default function DetailCS() {
     };
   }, [processedQueues]);
 
+  // ==================== LOGIKA TOMBOL YANG DIPERBAIKI ====================
+
+  // Tentukan state tombol berdasarkan kondisi antrian
+  const getButtonStates = () => {
+    const hasWaitingQueue = waitingQueues.length > 0;
+    const hasCalledQueue = !!calledQueue;
+    const hasServingQueue = !!currentServingQueue;
+    const hasNextQueue = !!nextQueue;
+
+    console.log("Status antrian:", {
+      hasWaitingQueue,
+      hasCalledQueue,
+      hasServingQueue,
+      hasNextQueue,
+      waitingCount: waitingQueues.length,
+      calledQueue,
+      currentServingQueue,
+      nextQueue,
+    });
+
+    // 1. Skenario: ADA ANTRIAN BARU (menunggu)
+    if (hasWaitingQueue && !hasCalledQueue && !hasServingQueue) {
+      console.log("Skenario 1: Ada antrian baru, tombol Panggil harus aktif");
+      return {
+        call: true, // Tombol Panggil AKTIF
+        serve: false, // Layani tidak aktif
+        complete: false, // Selesai tidak aktif
+        cancel: false, // Batal tidak aktif
+        callNext: false, // Selanjutnya tidak aktif
+      };
+    }
+
+    // 2. Skenario: ANTRIAN SUDAH DIPANGGIL (status: called)
+    if (hasCalledQueue && !hasServingQueue) {
+      console.log("Skenario 2: Antrian sudah dipanggil");
+      return {
+        call: true, // Tombol Panggil Ulang AKTIF
+        serve: true, // Layani AKTIF
+        complete: false, // Selesai tidak aktif
+        cancel: false, // Batal tidak aktif
+        callNext: true, // Selanjutnya AKTIF
+      };
+    }
+
+    // 3. Skenario: SEDANG DILAYANI (status: served)
+    if (hasServingQueue) {
+      console.log("Skenario 3: Sedang dilayani");
+      return {
+        call: false, // Panggil Ulang tidak aktif
+        serve: false, // Layani tidak aktif
+        complete: true, // Selesai AKTIF
+        cancel: true, // Batal AKTIF
+        callNext: false, // Selanjutnya tidak aktif
+      };
+    }
+
+    // 4. Skenario: SETELAH SELESAI/BATAL
+    if (!hasCalledQueue && !hasServingQueue && hasNextQueue) {
+      console.log("Skenario 4: Setelah selesai/batal, ada antrian berikutnya");
+      return {
+        call: false, // Panggil tidak aktif
+        serve: false, // Layani tidak aktif
+        complete: false, // Selesai tidak aktif
+        cancel: false, // Batal tidak aktif
+        callNext: true, // Selanjutnya AKTIF
+      };
+    }
+
+    // 5. Default: tidak ada antrian
+    console.log("Skenario 5: Tidak ada antrian");
+    return {
+      call: false,
+      serve: false,
+      complete: false,
+      cancel: false,
+      callNext: false,
+    };
+  };
+
+  const buttonStates = getButtonStates();
+
   // ==================== FUNGSI UNTUK CARD TELAH DILAYANI ====================
 
   // Antrian yang sedang dilayani
@@ -375,7 +459,7 @@ export default function DetailCS() {
   // Hitung durasi total dari waiting ke selesai/batal
   const calculateTotalDuration = (queue) => {
     if (!queue.created_at) return "00:00:00";
-    
+
     let endTime;
     if (queue.status === "done" && queue.done_at) {
       endTime = new Date(queue.done_at);
@@ -384,7 +468,7 @@ export default function DetailCS() {
     } else {
       return "00:00:00";
     }
-    
+
     const startTime = new Date(queue.created_at);
     const diffMs = endTime - startTime;
 
@@ -397,23 +481,31 @@ export default function DetailCS() {
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  // Antrian yang sudah selesai atau batal untuk riwayat terbaru
+  // Antrian yang sudah selesai atau batal untuk riwayat terbaru dengan sorting
   const completedOrCanceledQueues = useMemo(() => {
     return filteredQueues
-      .filter(queue => queue.status === "done" || queue.status === "canceled")
+      .filter((queue) => queue.status === "done" || queue.status === "canceled")
       .sort((a, b) => {
         // Urutkan berdasarkan waktu terbaru (descending)
         const getEndTime = (queue) => {
-          if (queue.status === "done" && queue.done_at) return new Date(queue.done_at);
-          if (queue.status === "canceled" && queue.canceled_at) return new Date(queue.canceled_at);
+          if (queue.status === "done" && queue.done_at)
+            return new Date(queue.done_at);
+          if (queue.status === "canceled" && queue.canceled_at)
+            return new Date(queue.canceled_at);
           return new Date(0);
         };
-        
+
         const timeA = getEndTime(a);
         const timeB = getEndTime(b);
-        return timeB - timeA;
+
+        // Gunakan sorting order yang dipilih
+        if (historySortOrder === "desc") {
+          return timeB - timeA; // Terbaru ke terlama
+        } else {
+          return timeA - timeB; // Terlama ke terbaru
+        }
       });
-  }, [filteredQueues]);
+  }, [filteredQueues, historySortOrder]); // Tambah dependency historySortOrder
 
   // ==================== FUNGSI UNTUK KLIK ANTRIAN ====================
 
@@ -587,11 +679,25 @@ export default function DetailCS() {
 
   // ==================== FUNGSI UTAMA YANG DIPERBAIKI ====================
 
-  const handleCallAgain = async () => {
-    const queueToCall = currentServingQueue || calledQueue || nextQueue;
+  // Fungsi untuk tombol Panggil/Panggil Ulang
+  const handleCallAction = async () => {
+    let queueToCall;
+
+    // Jika ada antrian yang sudah dipanggil, gunakan itu untuk panggil ulang
+    if (calledQueue) {
+      queueToCall = calledQueue;
+    }
+    // Jika ada antrian yang sedang dilayani, gunakan itu untuk panggil ulang
+    else if (currentServingQueue) {
+      queueToCall = currentServingQueue;
+    }
+    // Jika ada antrian berikutnya, panggil yang baru
+    else if (nextQueue) {
+      queueToCall = nextQueue;
+    }
 
     if (!queueToCall) {
-      showPopup("Tidak ada antrian yang dapat dipanggil ulang");
+      showPopup("Tidak ada antrian yang dapat dipanggil");
       return;
     }
 
@@ -609,12 +715,12 @@ export default function DetailCS() {
       }, 500);
 
       showPopup(
-        `Memanggil ulang antrian ${formatQueueNumber(queueToCall.queue_number)}`
+        `Memanggil antrian ${formatQueueNumber(queueToCall.queue_number)}`
       );
     } catch (error) {
-      console.error("Error memanggil ulang:", error);
+      console.error("Error memanggil antrian:", error);
       showPopup(
-        `Gagal memanggil ulang: ${
+        `Gagal memanggil antrian: ${
           error.data?.message || error.message || "Terjadi kesalahan"
         }`
       );
@@ -664,7 +770,7 @@ export default function DetailCS() {
     }
   };
 
-  // PERBAIKAN: Fungsi handleDoneQueue yang hanya menjalankan API done tanpa memanggil antrian berikutnya
+  // Fungsi handleDoneQueue yang hanya menjalankan API done tanpa memanggil antrian berikutnya
   const handleDoneQueue = async () => {
     const queueToComplete = currentServingQueue;
 
@@ -705,7 +811,7 @@ export default function DetailCS() {
   };
 
   const handleCancelQueue = async () => {
-    const queueToCancel = currentServingQueue || calledQueue || nextQueue;
+    const queueToCancel = currentServingQueue || calledQueue;
 
     if (!queueToCancel) {
       showPopup("Tidak ada antrian yang dapat dibatalkan");
@@ -735,7 +841,7 @@ export default function DetailCS() {
     }
   };
 
-  const handleCallNextGlobal = async () => {
+  const handleCallNextQueue = async () => {
     try {
       setIsCallingNext(true);
       const result = await callNextQueue(id).unwrap();
@@ -757,7 +863,21 @@ export default function DetailCS() {
     } catch (error) {
       console.error("Error memanggil antrian berikutnya:", error);
       if (error.status === 404 || error.status === 400) {
-        await handleCallNextManual();
+        // Fallback ke manual call
+        if (nextQueue) {
+          await callQueue(nextQueue.id).unwrap();
+          await playCallAudio(
+            nextQueue.queue_number,
+            data.name,
+            data.counter_code
+          );
+          await refetchQueues();
+          showPopup(
+            `Memanggil antrian ${formatQueueNumber(nextQueue.queue_number)}`
+          );
+        } else {
+          showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+        }
       } else {
         showPopup(
           `Gagal memanggil antrian berikutnya: ${
@@ -767,32 +887,6 @@ export default function DetailCS() {
       }
     } finally {
       setIsCallingNext(false);
-    }
-  };
-
-  const handleCallNextManual = async () => {
-    if (!nextQueue) {
-      showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
-      return;
-    }
-
-    try {
-      setIsCalling(true);
-      await callQueue(nextQueue.id).unwrap();
-      await playCallAudio(nextQueue.queue_number, data.name, data.counter_code);
-      await refetchQueues();
-      showPopup(
-        `Memanggil antrian ${formatQueueNumber(nextQueue.queue_number)}`
-      );
-    } catch (error) {
-      console.error("Error memanggil antrian:", error);
-      showPopup(
-        `Gagal memanggil antrian: ${
-          error.data?.message || error.message || "Terjadi kesalahan"
-        }`
-      );
-    } finally {
-      setIsCalling(false);
     }
   };
 
@@ -954,39 +1048,8 @@ export default function DetailCS() {
         </div>
       </div>
 
-      {/* ================= INFORMASI LAYANAN - DIUBAH LAYOUT ================= */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-            <i className="pi pi-info-circle text-blue-500"></i>
-            Informasi Layanan
-          </h3>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center py-2 border-b border-slate-100">
-              <span className="text-sm text-slate-500">Nama Layanan:</span>
-              <span className="font-semibold text-slate-700">{data.name}</span>
-            </div>
-            <div className="flex justify-between items-center py-2 border-b border-slate-100">
-              <span className="text-sm text-slate-500">Kode Counter:</span>
-              <span className="font-mono bg-slate-100 px-3 py-1 rounded-lg text-slate-700">
-                {data.counter_code}
-              </span>
-            </div>
-            <div className="flex justify-between items-start py-2 border-b border-slate-100">
-              <span className="text-sm text-slate-500">Deskripsi:</span>
-              <span className="text-slate-700 text-right max-w-xs">
-                {data.description}
-              </span>
-            </div>
-            <div className="flex justify-between items-center py-2">
-              <span className="text-sm text-slate-500">Kuota per Hari:</span>
-              <span className="font-semibold text-slate-700">
-                {data.quota} / hari
-              </span>
-            </div>
-          </div>
-        </div>
-
+      {/* ================= GRID 2 KOLOM ================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* STATUS ANTRIAN SECTION - DENGAN KLIK UNTUK MEMANGGIL */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
@@ -1068,7 +1131,7 @@ export default function DetailCS() {
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
             <i className="pi pi-users text-green-500"></i>
-            Telah Dilayani
+            Dilayani
           </h3>
 
           {/* Antrian yang sedang Dilayani */}
@@ -1105,9 +1168,25 @@ export default function DetailCS() {
 
           {/* Riwayat Terbaru - Antrian Selesai/Batal */}
           <div>
-            <h4 className="text-md font-semibold text-slate-800 mb-3">
-              Riwayat Terbaru ({completedOrCanceledQueues.length})
-            </h4>
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex items-center gap-2">
+                <h4 className="text-md font-semibold text-slate-800">
+                  Riwayat Terbaru ({completedOrCanceledQueues.length})
+                </h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 hidden sm:block">
+                  Urutkan:
+                </span>
+                <select
+                  value={historySortOrder}
+                  onChange={(e) => setHistorySortOrder(e.target.value)}
+                  className="text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[140px]">
+                  <option value="desc">Terbaru → Terlama</option>
+                  <option value="asc">Terlama → Terbaru</option>
+                </select>
+              </div>
+            </div>
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {completedOrCanceledQueues.length > 0 ? (
                 completedOrCanceledQueues.slice(0, 10).map((queue) => (
@@ -1132,16 +1211,21 @@ export default function DetailCS() {
                       </span>
                     </div>
                     <div className="text-right">
-                      <div className={`text-xs font-mono font-semibold ${
-                        queue.status === "done" ? "text-green-600" : "text-red-600"
-                      }`}>
+                      <div
+                        className={`text-xs font-mono font-semibold ${
+                          queue.status === "done"
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}>
                         {calculateTotalDuration(queue)}
                       </div>
                       <div className="text-xs text-slate-500">
                         {queue.status === "done" && queue.done_at
                           ? new Date(queue.done_at).toLocaleTimeString("id-ID")
                           : queue.canceled_at
-                          ? new Date(queue.canceled_at).toLocaleTimeString("id-ID")
+                          ? new Date(queue.canceled_at).toLocaleTimeString(
+                              "id-ID"
+                            )
                           : ""}
                       </div>
                     </div>
@@ -1165,59 +1249,81 @@ export default function DetailCS() {
         </div>
       </div>
 
-      {/* Aksi Counter */}
+      {/* Aksi Counter - LOGIKA TOMBOL YANG DIPERBAIKI */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-800 mb-4">
           Aksi Counter
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Tombol Panggil/Panggil Ulang */}
           <Button
-            label={isCalling ? "Memanggil..." : "Panggil Ulang"}
-            icon={isCalling ? "pi pi-spin pi-spinner" : "pi pi-refresh"}
-            className="h-12 w-full bg-indigo-50 border border-indigo-300 text-indigo-700 rounded-full font-semibold"
-            onClick={handleCallAgain}
-            disabled={
-              !(currentServingQueue || calledQueue || nextQueue) ||
-              isAnyActionLoading
+            label={
+              buttonStates.call
+                ? calledQueue || currentServingQueue
+                  ? "Panggil Ulang"
+                  : "Panggil"
+                : "Panggil"
             }
+            className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
+              buttonStates.call
+                ? "bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg shadow-indigo-200 border-0"
+                : "bg-gradient-to-r from-slate-300 to-slate-400 text-slate-600 opacity-50 cursor-not-allowed border-0"
+            }`}
+            onClick={handleCallAction}
+            disabled={!buttonStates.call || isAnyActionLoading}
           />
+
+          {/* Tombol Layani */}
           <Button
             label={isServing ? "Melayani..." : "Layani"}
-            icon={isServing ? "pi pi-spin pi-spinner" : "pi pi-user-check"}
-            className="h-12 w-full bg-green-50 border border-green-300 text-green-700 rounded-full font-semibold"
+            className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
+              buttonStates.serve
+                ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white shadow-lg shadow-green-200 border-0"
+                : "bg-gradient-to-r from-slate-300 to-slate-400 text-slate-600 opacity-50 cursor-not-allowed border-0"
+            }`}
             onClick={handleServeQueue}
-            disabled={!(calledQueue || nextQueue) || isAnyActionLoading}
+            disabled={!buttonStates.serve || isAnyActionLoading}
           />
+
+          {/* Tombol Selesai */}
           <Button
             label={isCompleting ? "Menyelesaikan..." : "Selesai"}
-            icon={isCompleting ? "pi pi-spin pi-spinner" : "pi pi-check-circle"}
-            className="h-12 w-full bg-teal-50 border border-teal-300 text-teal-700 rounded-full font-semibold"
+            className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
+              buttonStates.complete
+                ? "bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white shadow-lg shadow-teal-200 border-0"
+                : "bg-gradient-to-r from-slate-300 to-slate-400 text-slate-600 opacity-50 cursor-not-allowed border-0"
+            }`}
             onClick={handleDoneQueue}
-            disabled={!currentServingQueue || isAnyActionLoading}
+            disabled={!buttonStates.complete || isAnyActionLoading}
           />
+
+          {/* Tombol Batal */}
           <Button
             label={isCancelling ? "Membatalkan..." : "Batal"}
-            icon={isCancelling ? "pi pi-spin pi-spinner" : "pi pi-times-circle"}
-            className="h-12 w-full bg-red-50 border border-red-300 text-red-700 rounded-full font-semibold"
+            className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
+              buttonStates.cancel
+                ? "bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-lg shadow-red-200 border-0"
+                : "bg-gradient-to-r from-slate-300 to-slate-400 text-slate-600 opacity-50 cursor-not-allowed border-0"
+            }`}
             onClick={handleCancelQueue}
-            disabled={
-              !(currentServingQueue || calledQueue || nextQueue) ||
-              isAnyActionLoading
-            }
+            disabled={!buttonStates.cancel || isAnyActionLoading}
           />
+
+          {/* Tombol Selanjutnya */}
           <Button
             label={isCallingNext ? "Memanggil..." : "Selanjutnya"}
-            icon={
-              isCallingNext ? "pi pi-spin pi-spinner" : "pi pi-step-forward"
-            }
-            className="h-12 w-full bg-purple-50 border border-purple-300 text-purple-700 rounded-full font-semibold"
-            onClick={handleCallNextGlobal}
-            disabled={isAnyActionLoading}
+            className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
+              buttonStates.callNext
+                ? "bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white shadow-lg shadow-purple-200 border-0"
+                : "bg-gradient-to-r from-slate-300 to-slate-400 text-slate-600 opacity-50 cursor-not-allowed border-0"
+            }`}
+            onClick={handleCallNextQueue}
+            disabled={!buttonStates.callNext || isAnyActionLoading}
           />
         </div>
       </div>
 
-      {/* ================= STATISTIK HARIAN - SEPERTI DI DETAILCOUNTER.JSX ================= */}
+      {/* ================= STATISTIK HARIAN DENGAN INFORMASI LAYANAN ================= */}
       <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-6 shadow-lg shadow-slate-200/20 backdrop-blur-sm">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
           <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-[#004A9F] to-[#0066CC] bg-clip-text text-transparent drop-shadow-sm">
@@ -1239,31 +1345,71 @@ export default function DetailCS() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-3">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
-            <div className="text-2xl sm:text-4xl font-bold">
-              {displayStats.total}
-            </div>
-            <div className="text-blue-100 text-xs sm:text-sm font-medium mt-1">
-              Total Antrian
+        {/* Grid: Informasi Layanan di Kiri, Statistik di Kanan */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Kolom 1: Informasi Layanan */}
+          <div className="lg:col-span-2 bg-white/50 backdrop-blur-sm border border-slate-200/50 rounded-xl p-5">
+            <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <i className="pi pi-info-circle text-blue-500"></i>
+              Informasi Layanan
+            </h3>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Nama Layanan:</span>
+                <span className="font-semibold text-slate-700 text-right">
+                  {data.name}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Kode Counter:</span>
+                <span className="font-mono bg-slate-100 px-3 py-1 rounded-lg text-slate-700">
+                  {data.counter_code}
+                </span>
+              </div>
+              <div className="flex justify-between items-start py-2 border-b border-slate-100">
+                <span className="text-sm text-slate-500">Deskripsi:</span>
+                <span className="text-slate-700 text-right max-w-xs">
+                  {data.description}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-2">
+                <span className="text-sm text-slate-500">Kuota per Hari:</span>
+                <span className="font-semibold text-slate-700">
+                  {data.quota} / hari
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
-            <div className="text-2xl sm:text-4xl font-bold">
-              {displayStats.done}
-            </div>
-            <div className="text-green-100 text-xs sm:text-sm font-medium mt-1">
-              Selesai
-            </div>
-          </div>
+          {/* Kolom 2-4: Statistik */}
+          <div className="lg:col-span-1">
+            <div className="grid grid-cols-1 lg:grid-cols-1 gap-3 sm:gap-3">
+              <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+                <div className="text-2xl sm:text-4xl font-bold">
+                  {displayStats.total}
+                </div>
+                <div className="text-blue-100 text-xs sm:text-sm font-medium mt-1">
+                  Total Antrian
+                </div>
+              </div>
 
-          <div className="bg-gradient-to-br from-red-500 to-red-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
-            <div className="text-2xl sm:text-4xl font-bold">
-              {displayStats.canceled}
-            </div>
-            <div className="text-red-100 text-xs sm:text-sm font-medium mt-1">
-              Batal
+              <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+                <div className="text-2xl sm:text-4xl font-bold">
+                  {displayStats.done}
+                </div>
+                <div className="text-green-100 text-xs sm:text-sm font-medium mt-1">
+                  Selesai
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-red-500 to-red-600 text-white p-3 sm:p-5 rounded-2xl shadow-lg text-center">
+                <div className="text-2xl sm:text-4xl font-bold">
+                  {displayStats.canceled}
+                </div>
+                <div className="text-red-100 text-xs sm:text-sm font-medium mt-1">
+                  Batal
+                </div>
+              </div>
             </div>
           </div>
         </div>
