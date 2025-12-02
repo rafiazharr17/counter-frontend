@@ -18,6 +18,7 @@
     "lucide-react": "^0.553.0",
     "primeicons": "^7.0.0",
     "primereact": "^10.9.7",
+    "pusher-js": "^8.4.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-hook-form": "^7.66.0",

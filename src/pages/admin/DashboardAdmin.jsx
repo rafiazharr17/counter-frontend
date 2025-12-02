@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useGetCountersQuery } from "../../features/counters/counterApi";
+// Pastikan path import ini sesuai dengan struktur folder Anda
 import { useWebSocket } from "../../hooks/useWebSocket";
 
 const DashboardAdmin = () => {
@@ -7,353 +8,355 @@ const DashboardAdmin = () => {
   const [queueStats, setQueueStats] = useState([]);
   const [activeQueues, setActiveQueues] = useState([]);
   const [allQueues, setAllQueues] = useState([]);
-  const [wsConnected, setWsConnected] = useState(false);
 
+  // Ambil data counters
   const { data: counterData, isLoading: loadingCounters } =
     useGetCountersQuery();
 
-  // Load counters data
+  // Update state counters saat data tersedia
   useEffect(() => {
     if (!counterData) return;
     setCounters(counterData);
   }, [counterData]);
 
-  // Fungsi untuk mengurutkan antrean sesuai aturan
+  // --- HELPER FUNCTIONS ---
+
+  // Fungsi untuk mengekstrak nomor antrian (angka terakhir)
+  const getQueueNumber = (queue) => {
+    if (!queue?.queue_number) return 0;
+    const parts = queue.queue_number.split("-");
+    if (parts.length >= 4) {
+      const lastPart = parts[parts.length - 1];
+      return parseInt(lastPart, 10) || 0;
+    }
+    return 0;
+  };
+
+  // Fungsi sorting (Status -> Nomor -> Waktu)
   const sortQueues = (queues) => {
     if (!queues || queues.length === 0) return [];
-    
-    // Urutan prioritas status
+
     const statusOrder = {
-      'waiting': 1,
-      'called': 2,
-      'served': 3,
-      'done': 4,
-      'canceled': 5
+      waiting: 1,
+      called: 2,
+      served: 3,
+      done: 4,
+      canceled: 5,
     };
-    
-    // Fungsi untuk mengekstrak nomor antrian (angka terakhir dari queue_number)
-    const getQueueNumber = (queue) => {
-      if (!queue.queue_number) return 0;
-      const parts = queue.queue_number.split('-');
-      if (parts.length >= 4) {
-        const lastPart = parts[parts.length - 1];
-        return parseInt(lastPart, 10) || 0;
-      }
-      return 0;
-    };
-    
-    // Salin array untuk diurutkan
-    const sortedQueues = [...queues].sort((a, b) => {
-      // Urutkan berdasarkan status terlebih dahulu
-      const statusDiff = statusOrder[a.status] - statusOrder[b.status];
-      if (statusDiff !== 0) {
-        return statusDiff;
-      }
-      
-      // Jika status sama, urutkan berdasarkan nomor antrian
+
+    return [...queues].sort((a, b) => {
+      // 1. Prioritas Status
+      const statusDiff =
+        (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
+      if (statusDiff !== 0) return statusDiff;
+
+      // 2. Prioritas Nomor Antrian
       const queueNumA = getQueueNumber(a);
       const queueNumB = getQueueNumber(b);
       
-      // Jika nomor antrian sama, urutkan berdasarkan waktu pembuatan
-      if (queueNumA === queueNumB) {
-        return new Date(a.created_at) - new Date(b.created_at);
+      if (queueNumA !== queueNumB) {
+         return queueNumA - queueNumB;
       }
-      
-      return queueNumA - queueNumB;
+
+      // 3. Fallback ke Waktu Created
+      return new Date(a.created_at) - new Date(b.created_at);
     });
-    
-    return sortedQueues;
   };
 
-  // Gunakan useMemo untuk mengurutkan allQueues
+  // Memoize sorted queues untuk performa render
   const sortedAllQueues = useMemo(() => {
     return sortQueues(allQueues);
   }, [allQueues]);
 
-  // WebSocket handler
-  const handleQueueUpdate = useCallback(
-    (payload) => {
-      console.log("WebSocket event received:", payload);
+  // --- WEBSOCKET HANDLER ---
 
-      if (!payload) {
-        console.error("Payload is null or undefined");
+  const handleQueueUpdate = useCallback(
+    (event) => {
+      console.log("🔔 WebSocket event received:", event);
+
+      if (!event) return;
+
+      // FIX: Handle struktur data dari Laravel Reverb/Echo
+      // Data biasanya dibungkus, misal: { queue: { id: 1, ... } }
+      const queueData = event.queue || event;
+
+      // Validasi data minimal
+      if (!queueData || !queueData.counter_id) {
+        console.warn("⚠️ Invalid queue data received:", queueData);
         return;
       }
 
-      try {
-        const queueData = payload;
-        const counterId = queueData.counter_id;
+      const counterId = parseInt(queueData.counter_id);
+      
+      console.log(
+        `♻️ Processing update for Counter ${counterId}, Queue: ${queueData.queue_number}, Status: ${queueData.status}`
+      );
 
-        if (!counterId) {
-          console.error("Invalid queue data - missing counter_id:", queueData);
-          return;
-        }
+      // Cari info loket berdasarkan ID untuk melengkapi data tampilan
+      const counterInfo = counters.find((c) => c.id === counterId);
 
-        console.log(
-          "Processing queue update for counter:",
-          counterId,
-          "queue:",
-          queueData.queue_number
+      // 1. Update List Antrian (All Queues)
+      setAllQueues((prev) => {
+        const newQueues = [...prev];
+
+        const existingIndex = newQueues.findIndex(
+          (q) => q.id === queueData.id
         );
 
-        // Cari counter info
-        const counterInfo = counters.find((c) => c.id === counterId);
+        const updatedQueueObj = {
+          id: queueData.id,
+          counter_id: counterId,
+          name: counterInfo?.name || `Loket ${counterId}`,
+          counter_code:
+            counterInfo?.counter_code ||
+            getCounterCodeFromQueue(queueData.queue_number),
+          queue_number: queueData.queue_number,
+          status: queueData.status,
+          created_at: queueData.created_at,
+          called_at: queueData.called_at,
+          served_at: queueData.served_at,
+          done_at: queueData.done_at,
+          canceled_at: queueData.canceled_at, // Pastikan field ini ada
+        };
 
-        // Update allQueues
-        setAllQueues((prev) => {
-          const newQueues = [...prev];
+        if (existingIndex >= 0) {
+          newQueues[existingIndex] = updatedQueueObj;
+        } else {
+          newQueues.push(updatedQueueObj);
+        }
 
-          // Cek apakah queue sudah ada
-          const existingIndex = newQueues.findIndex(
-            (q) => q.id === queueData.id && q.counter_id === counterId
-          );
+        return newQueues;
+      });
 
-          const updatedQueue = {
-            id: queueData.id,
-            counter_id: counterId,
-            name: counterInfo?.name || `Counter ${counterId}`,
-            counter_code:
-              counterInfo?.counter_code ||
-              getCounterCodeFromQueue(queueData.queue_number),
-            queue_number: queueData.queue_number,
-            status: queueData.status,
-            created_at: queueData.created_at,
-            called_at: queueData.called_at,
-            served_at: queueData.served_at,
-            done_at: queueData.done_at,
-          };
+      // 2. Update Statistik Sederhana (Opsional, agar angka real-time)
+      // Kita update activeQueues juga agar sinkron
+      setActiveQueues((prev) => {
+         // Logika sama dengan allQueues, tapi filter status aktif saja jika perlu
+         // Untuk penyederhanaan, kita bisa derive dari allQueues di render, 
+         // tapi jika activeQueues state terpisah, kita update juga.
+         return prev; 
+      });
 
-          if (existingIndex >= 0) {
-            // Update queue yang sudah ada
-            newQueues[existingIndex] = updatedQueue;
-            console.log("Updated existing queue:", queueData.queue_number);
-          } else {
-            // Tambah queue baru
-            newQueues.push(updatedQueue);
-            console.log("Added new queue:", queueData.queue_number);
+      // Update Queue Stats (Angka di kartu atas)
+      setQueueStats((prevStats) => {
+        return prevStats.map(stat => {
+          if (stat.id === counterId) {
+             // Jika ada antrian baru (status waiting dan baru dibuat), tambah total
+             // Logika ini kompleks jika hanya mengandalkan event, 
+             // paling aman adalah refetch stats, tapi untuk UI optimis:
+             if (queueData.status === 'waiting' && !queueData.called_at) {
+                 // Asumsi ini antrian baru
+                 // return { ...stat, total: stat.total + 1 };
+             }
           }
-
-          return newQueues;
+          return stat;
         });
-      } catch (error) {
-        console.error("Error processing queue update:", error);
-      }
+      });
+      
+      // TRIGGER RELOAD DATA (Opsional tapi direkomendasikan untuk konsistensi data)
+      // Jika ingin memastikan data 100% akurat dengan DB, uncomment baris bawah:
+      // loadInitialData(); 
     },
-    [counters]
+    [counters] // Dependency counters diperlukan untuk lookup nama loket
   );
 
-  // Gunakan WebSocket hook
+  // Integrasi WebSocket Hook
+  // Karena hook kita sudah pakai useRef, perubahan pada handleQueueUpdate
+  // TIDAK akan memutus koneksi WebSocket. Aman!
   useWebSocket(handleQueueUpdate);
 
-  // Load initial data
-  useEffect(() => {
+
+  // --- INITIAL DATA LOADING ---
+  
+  const loadInitialData = async () => {
     if (!counterData || counterData.length === 0) return;
 
-    const loadInitialData = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        const today = new Date().toISOString().slice(0, 10);
+    try {
+      const token = localStorage.getItem("token");
+      const today = new Date().toISOString().slice(0, 10);
 
-        if (!token) {
-          console.error("No token found in localStorage");
-          return;
-        }
-
-        // Load statistics for each counter
-        const statsPromises = counterData.map(async (counter) => {
-          try {
-            const res = await fetch(
-              `http://127.0.0.1:8000/api/counters/${counter.id}/statistics?date=${today}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-
-            return {
-              id: counter.id,
-              name: counter.name,
-              counter_code: counter.counter_code,
-              total: data.data?.total || 0,
-              last_queue: data.data?.last_queue || null,
-            };
-          } catch (error) {
-            console.error(
-              `Error loading stats for counter ${counter.id}:`,
-              error
-            );
-            return {
-              id: counter.id,
-              name: counter.name,
-              counter_code: counter.counter_code,
-              total: 0,
-              last_queue: null,
-            };
-          }
-        });
-
-        // Load semua guest queues
-        let allQueuesData = [];
+      // 1. Load Stats
+      const statsPromises = counterData.map(async (counter) => {
         try {
-          const guestRes = await fetch(
-            "http://127.0.0.1:8000/api/guest/queues"
+          const res = await fetch(
+            `http://127.0.0.1:8000/api/counters/${counter.id}/statistics?date=${today}`,
+            {
+              headers: token
+                ? {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                  }
+                : { "Content-Type": "application/json" },
+            }
           );
-          if (guestRes.ok) {
-            const guestData = await guestRes.json();
-            allQueuesData = guestData?.data || [];
-            console.log(
-              "Loaded ALL queues (no time filter):",
-              allQueuesData.length
-            );
-          }
-        } catch (error) {
-          console.error("Error loading guest queues:", error);
-        }
 
-        const stats = await Promise.all(statsPromises);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
 
-        // Urutkan stats berdasarkan nama loket (abjad) dan counter_code
-        const sortedStats = stats.sort((a, b) => {
-          const nameCompare = a.name.localeCompare(b.name);
-          if (nameCompare !== 0) return nameCompare;
-          return a.counter_code.localeCompare(b.counter_code);
-        });
-
-        setQueueStats(sortedStats);
-
-        // Process semua antrean untuk ditampilkan
-        const processedQueues = allQueuesData.map((guestQueue) => {
-          const counterInfo = counterData.find(
-            (c) => c.id === guestQueue.counter_id
-          );
           return {
-            id: guestQueue.id,
-            counter_id: guestQueue.counter_id,
-            name: counterInfo?.name || `Counter ${guestQueue.counter_id}`,
-            counter_code:
-              counterInfo?.counter_code ||
-              getCounterCodeFromQueue(guestQueue.queue_number),
-            queue_number: guestQueue.queue_number,
-            status: guestQueue.status,
-            created_at: guestQueue.created_at,
-            called_at: guestQueue.called_at,
-            served_at: guestQueue.served_at,
-            done_at: guestQueue.done_at,
+            id: counter.id,
+            name: counter.name,
+            counter_code: counter.counter_code,
+            total: data.data?.total || 0,
+            last_queue: data.data?.last_queue || null,
           };
-        });
+        } catch (error) {
+          console.error(`Stats error for ${counter.id}:`, error);
+          return {
+            id: counter.id,
+            name: counter.name,
+            counter_code: counter.counter_code,
+            total: 0,
+            last_queue: null,
+          };
+        }
+      });
 
-        console.log("All processed queues for display:", processedQueues);
-        
-        // Set allQueues dengan data yang sudah diproses
-        // Sorting akan dilakukan oleh useMemo
-        setAllQueues(processedQueues);
-
-        // Filter untuk antrian aktif (waiting, called, served) untuk tampilan khusus
-        const activeStatuses = ["waiting", "called", "served"];
-        const activeQueuesOnly = processedQueues.filter((q) =>
-          activeStatuses.includes(q.status)
+      // 2. Load All Queues
+      let allQueuesData = [];
+      try {
+        const guestRes = await fetch(
+          "http://127.0.0.1:8000/api/guest/queues"
         );
-        setActiveQueues(activeQueuesOnly);
+        if (guestRes.ok) {
+          const guestData = await guestRes.json();
+          allQueuesData = guestData?.data || [];
+        }
       } catch (error) {
-        console.error("Error loading initial data:", error);
+        console.error("Error loading guest queues:", error);
       }
-    };
 
+      const stats = await Promise.all(statsPromises);
+
+      // Sort Stats
+      const sortedStats = stats.sort((a, b) => {
+        const nameCompare = a.name.localeCompare(b.name);
+        return nameCompare !== 0
+          ? nameCompare
+          : a.counter_code.localeCompare(b.counter_code);
+      });
+      setQueueStats(sortedStats);
+
+      // Process Queues Display
+      const processedQueues = allQueuesData.map((guestQueue) => {
+        const counterInfo = counterData.find(
+          (c) => c.id === guestQueue.counter_id
+        );
+        return {
+          id: guestQueue.id,
+          counter_id: guestQueue.counter_id,
+          name: counterInfo?.name || `Counter ${guestQueue.counter_id}`,
+          counter_code:
+            counterInfo?.counter_code ||
+            getCounterCodeFromQueue(guestQueue.queue_number),
+          queue_number: guestQueue.queue_number,
+          status: guestQueue.status,
+          created_at: guestQueue.created_at,
+          called_at: guestQueue.called_at,
+          served_at: guestQueue.served_at,
+          done_at: guestQueue.done_at,
+          canceled_at: guestQueue.canceled_at,
+        };
+      });
+
+      setAllQueues(processedQueues);
+
+      const activeStatuses = ["waiting", "called", "served"];
+      setActiveQueues(
+        processedQueues.filter((q) => activeStatuses.includes(q.status))
+      );
+    } catch (error) {
+      console.error("Error loading initial data:", error);
+    }
+  };
+
+  useEffect(() => {
     loadInitialData();
-  }, [counterData]);
+  }, [counterData]); // Reload saat data loket tersedia
 
-  // Helper function
+
+  // --- UI HELPERS ---
+
   const getCounterCodeFromQueue = (queueNumber) => {
     if (!queueNumber) return "-";
     const parts = queueNumber.split("-");
     return parts[0] || "-";
   };
 
-  // Format queue number helper
   const formatQueueNumber = (queueNumber) => {
     if (!queueNumber) return "-";
-
     const parts = queueNumber.split("-");
     if (parts.length < 4) return queueNumber;
-
-    const first6 = `${parts[0]}-${parts[1]}`;
-    const last3 = parts[3];
-
-    return `${first6}-${last3}`;
+    return `${parts[0]}-${parts[1]}-${parts[3]}`;
   };
 
-  // Helper untuk mengekstrak nomor loket dari counter_code
   const getLoketNumber = (counterCode) => {
     if (!counterCode) return "";
     const parts = counterCode.split("-");
     return parts.length > 1 ? parts[1] : counterCode;
   };
 
-  // Helper untuk mendapatkan label status
   const getStatusLabel = (status) => {
-    const statusLabels = {
+    const map = {
       waiting: "Menunggu",
       called: "Dipanggil",
       served: "Dilayani",
       done: "Selesai",
       canceled: "Batal",
     };
-    return statusLabels[status] || status;
+    return map[status] || status;
   };
 
-  // Helper untuk mendapatkan warna status
   const getStatusColor = (status) => {
-    const statusColors = {
+    const map = {
       waiting: "bg-blue-100 text-blue-800",
       called: "bg-yellow-100 text-yellow-800",
       served: "bg-orange-100 text-orange-800",
       done: "bg-green-100 text-green-800",
       canceled: "bg-red-100 text-red-800",
     };
-    return statusColors[status] || "bg-gray-100 text-gray-800";
+    return map[status] || "bg-gray-100 text-gray-800";
   };
 
   if (loadingCounters) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-600">
-        Memuat data dashboard...
+        <i className="pi pi-spin pi-spinner mr-2"></i> Memuat data dashboard...
       </div>
     );
   }
 
   return (
     <div className="space-y-4 sm:space-y-6 p-3 sm:p-4">
-      {/* Stats Cards Grid */}
+      {/* HEADER STATS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Card 1: Total Loket */}
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
             <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-teal-700">
               {counters.length}
             </p>
-            <p className="text-gray-700 mt-1 text-sm sm:text-base">Loket</p>
+            <p className="text-gray-700 mt-1 text-sm sm:text-base">Loket Aktif</p>
           </div>
-          <i className="pi pi-headphones text-teal-600 text-3xl sm:text-4xl md:text-5xl"></i>
+          <i className="pi pi-desktop text-teal-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
+        {/* Card 2: Total Antrian Hari Ini (dari sortedAllQueues) */}
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
-            <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-yellow-600">
-              10
+            <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-blue-600">
+              {sortedAllQueues.length}
             </p>
-            <p className="text-gray-700 mt-1 text-sm sm:text-base">User</p>
+            <p className="text-gray-700 mt-1 text-sm sm:text-base">Total Antrian</p>
           </div>
-          <i className="pi pi-users text-yellow-500 text-3xl sm:text-4xl md:text-5xl"></i>
+          <i className="pi pi-users text-blue-500 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
+        {/* Card 3: Tanggal */}
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
             <p className="font-semibold text-teal-700 text-base sm:text-lg md:text-lg">
-              Super Admin
+              Dashboard
             </p>
             <p className="text-gray-500 text-xs sm:text-sm md:text-sm">
               {new Date().toLocaleDateString("id-ID", {
@@ -363,151 +366,110 @@ const DashboardAdmin = () => {
               })}
             </p>
           </div>
-          <i className="pi pi-calendar text-teal-600 text-2xl sm:text-3xl md:text-4xl"></i>
+          <i className="pi pi-calendar text-teal-600 text-2xl sm:text-3xl md:text-4xl opacity-80"></i>
         </div>
       </div>
 
-      {/* MAIN CONTENT */}
+      {/* MAIN CONTENT GRID */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
-        {/* Statistik Section */}
-        <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20">
-          <p className="font-semibold text-gray-700 text-base sm:text-lg md:text-lg mb-3 sm:mb-4 flex gap-2 items-center">
-            <i className="pi pi-users text-sm sm:text-base"></i>
-            <span className="text-sm sm:text-base md:text-lg">
-              Jumlah Antrean Hari Ini
-            </span>
+        
+        {/* KIRI: Statistik Per Loket */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+          <p className="font-semibold text-slate-800 text-lg mb-4 flex gap-2 items-center">
+            <i className="pi pi-chart-bar text-teal-600"></i>
+            Antrian Per Loket
           </p>
 
-          <div className="space-y-2 sm:space-y-3">
+          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {queueStats.map((item, index) => (
               <div
                 key={item.id}
-                className="flex items-center justify-between border-b border-gray-100 pb-1 sm:pb-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-gray-700 text-sm sm:text-base">
-                    {item.name}
-                  </p>
-                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                    Loket {getLoketNumber(item.counter_code)}
-                  </span>
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors border border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2 h-10 rounded-full ${index % 2 === 0 ? 'bg-teal-500' : 'bg-blue-500'}`}></div>
+                  <div>
+                    <p className="text-slate-700 font-medium text-sm sm:text-base">
+                      {item.name}
+                    </p>
+                    <span className="text-xs text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                      Kode: {getLoketNumber(item.counter_code)}
+                    </span>
+                  </div>
                 </div>
-                <span
-                  className={`text-white text-xs sm:text-sm w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full ${
-                    index % 2 === 0
-                      ? "bg-teal-500"
-                      : index % 3 === 0
-                      ? "bg-purple-500"
-                      : "bg-amber-600"
-                  }`}>
-                  {item.total}
-                </span>
+                <div className="text-right">
+                  <span className="block text-xl font-bold text-slate-800">
+                    {item.total}
+                  </span>
+                  <span className="text-xs text-slate-500">Antrian</span>
+                </div>
               </div>
             ))}
+            {queueStats.length === 0 && (
+              <p className="text-center text-gray-400 py-4">Tidak ada data statistik</p>
+            )}
           </div>
         </div>
 
-        {/* Semua Antrean Section - MENGGUNAKAN sortedAllQueues */}
-        <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20">
-          <p className="font-semibold text-gray-700 text-base sm:text-lg md:text-lg mb-3 sm:mb-4 flex gap-2 items-center">
-            <i className="pi pi-list text-sm sm:text-base"></i>
-            <span className="text-sm sm:text-base md:text-lg">
-              Antrean Saat Ini ({sortedAllQueues.length})
+        {/* KANAN: Tabel Semua Antrian (Live Update) */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+          <p className="font-semibold text-slate-800 text-lg mb-4 flex gap-2 items-center justify-between">
+            <span className="flex items-center gap-2">
+              <i className="pi pi-list text-blue-600"></i>
+              Log Antrian Realtime
+            </span>
+            <span className="text-xs font-normal bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center gap-1">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              Live
             </span>
           </p>
 
-          <div className="overflow-x-auto max-h-96">
-            <table className="w-full border border-gray-300 text-gray-700 min-w-[300px]">
-              <thead className="bg-teal-700 text-white">
+          <div className="overflow-x-auto max-h-[500px] rounded-xl border border-slate-200">
+            <table className="w-full text-sm text-left text-slate-600">
+              <thead className="text-xs text-slate-700 uppercase bg-slate-100 sticky top-0 z-10">
                 <tr>
-                  <th className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                    Loket
-                  </th>
-                  <th className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                    Jenis Pelayanan
-                  </th>
-                  <th className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                    Nomor
-                  </th>
-                  <th className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                    Status
-                  </th>
-                  <th className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                    Waktu
-                  </th>
+                  <th className="px-4 py-3 text-center">No. Antrian</th>
+                  <th className="px-4 py-3">Loket</th>
+                  <th className="px-4 py-3 text-center">Status</th>
+                  <th className="px-4 py-3 text-right">Waktu</th>
                 </tr>
               </thead>
-
-              <tbody>
+              <tbody className="divide-y divide-slate-100">
                 {sortedAllQueues.length > 0 ? (
-                  sortedAllQueues
-                    .slice(0, 100) // Batasi hanya 100 data untuk performa
-                    .map((queue) => {
-                      // Tentukan waktu yang akan ditampilkan berdasarkan status
-                      let displayTime = "-";
-                      if (queue.status === "done" && queue.done_at) {
-                        displayTime = new Date(
-                          queue.done_at
-                        ).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        });
-                      } else if (queue.status === "served" && queue.served_at) {
-                        displayTime = new Date(
-                          queue.served_at
-                        ).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        });
-                      } else if (queue.status === "called" && queue.called_at) {
-                        displayTime = new Date(
-                          queue.called_at
-                        ).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        });
-                      } else if (queue.created_at) {
-                        displayTime = new Date(
-                          queue.created_at
-                        ).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        });
-                      }
+                  sortedAllQueues.slice(0, 50).map((queue) => {
+                    // Logic waktu display
+                    let displayTime = queue.created_at;
+                    if (queue.status === 'done' && queue.done_at) displayTime = queue.done_at;
+                    else if (queue.status === 'served' && queue.served_at) displayTime = queue.served_at;
+                    else if (queue.status === 'called' && queue.called_at) displayTime = queue.called_at;
 
-                      return (
-                        <tr key={queue.id}>
-                          <td className="p-2 border border-gray-300 text-center font-semibold text-xs sm:text-sm">
-                            Loket{" "}
-                            {getLoketNumber(queue.counter_code) ||
-                              queue.queue_number?.split("-")[1] ||
-                              "000"}
-                          </td>
-                          <td className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                            {queue.name}
-                          </td>
-                          <td className="p-2 border border-gray-300 text-center font-bold text-xs sm:text-sm">
-                            {formatQueueNumber(queue.queue_number)}
-                          </td>
-                          <td className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs ${getStatusColor(
-                                queue.status
-                              )}`}>
-                              {getStatusLabel(queue.status)}
-                            </span>
-                          </td>
-                          <td className="p-2 border border-gray-300 text-center text-xs sm:text-sm">
-                            {displayTime}
-                          </td>
-                        </tr>
-                      );
-                    })
+                    const timeStr = displayTime 
+                      ? new Date(displayTime).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) 
+                      : "-";
+
+                    return (
+                      <tr key={queue.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-center text-slate-800">
+                          {formatQueueNumber(queue.queue_number)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{queue.name}</div>
+                          <div className="text-xs text-slate-400">{getLoketNumber(queue.counter_code)}</div>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${getStatusColor(queue.status)}`}>
+                            {getStatusLabel(queue.status)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-xs font-mono text-slate-500">
+                          {timeStr}
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td
-                      colSpan="5"
-                      className="text-center text-gray-500 py-3 sm:py-4 italic text-xs sm:text-sm">
-                      Tidak ada antrean hari ini
+                    <td colSpan="4" className="px-6 py-8 text-center text-slate-400 italic">
+                      Belum ada aktivitas antrian hari ini
                     </td>
                   </tr>
                 )}
@@ -516,6 +478,22 @@ const DashboardAdmin = () => {
           </div>
         </div>
       </div>
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+      `}</style>
     </div>
   );
 };

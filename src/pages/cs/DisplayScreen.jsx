@@ -4,6 +4,8 @@ import { Toast } from "primereact/toast";
 // API Hooks
 import { useGetCountersQuery } from "../../features/counters/counterApi";
 import { useGetQueuesQuery } from "../../features/queues/queueApi";
+// Import WebSocket Hook
+import { useWebSocket } from "../../hooks/useWebSocket";
 
 export default function DisplayScreen() {
   const toast = useRef(null);
@@ -28,12 +30,21 @@ export default function DisplayScreen() {
   } = useGetCountersQuery({ guest: true });
 
   // Ambil data queues - semua antrian termasuk yang sudah selesai/dibatalkan
+  // PERUBAHAN: Ambil 'refetch' untuk update manual saat event WebSocket masuk
   const {
     data: queuesData = [],
     isLoading: isQueuesLoading,
     isError: isQueuesError,
     error: queuesError,
+    refetch: refetchQueues, 
   } = useGetQueuesQuery({ guest: true });
+
+  // INTEGRASI WEBSOCKET
+  // Saat ada event antrean (panggil, ambil nomor, selesai, dll), refresh data
+  useWebSocket((data) => {
+    console.log("WebSocket Event received in DisplayScreen:", data);
+    refetchQueues();
+  });
 
   // Handle errors
   useEffect(() => {

@@ -14,6 +14,8 @@ import {
   useCancelQueueMutation,
   useCallNextQueueMutation,
 } from "../../features/queues/queueApi";
+// 1. IMPORT HOOK WEBSOCKET
+import { useWebSocket } from "../../hooks/useWebSocket";
 
 // Helper functions dari DetailCounter.jsx
 function toYMD(dateObj) {
@@ -49,7 +51,8 @@ export default function DetailCS() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const ymd = useMemo(() => toYMD(selectedDate), [selectedDate]);
 
-  // Queue API hooks dengan polling untuk realtime updates
+  // Queue API hooks
+  // PERUBAHAN: Polling dihapus karena sudah ada WebSocket
   const {
     data: queuesData = [],
     isLoading: queuesLoading,
@@ -58,10 +61,17 @@ export default function DetailCS() {
   } = useGetQueuesByCounterQuery(
     { counterId: id, date: ymd },
     {
-      pollingInterval: 30000, // Refresh setiap 30 detik
+      // pollingInterval: 30000, // Dihapus/dikomentari agar fully realtime via WS
       refetchOnMountOrArgChange: true,
     }
   );
+
+  // 2. INTEGRASI WEBSOCKET
+  // Setiap kali ada event antrian (tambah/panggil/selesai), refresh data
+  useWebSocket((eventData) => {
+    console.log("🔔 WebSocket Event di DetailCS:", eventData);
+    refetchQueues();
+  });
 
   // Queue mutations dengan optimised refetch
   const [callQueue] = useCallQueueMutation();
@@ -171,7 +181,7 @@ export default function DetailCS() {
     });
   };
 
-  // Filter queues untuk counter ini - DIPERBAIKI sesuai DetailCounter.jsx
+  // Filter queues untuk counter ini
   const filteredQueues = useMemo(() => {
     if (!queuesData) return [];
 
@@ -193,7 +203,7 @@ export default function DetailCS() {
     return sortQueues(filtered);
   }, [queuesData, id]);
 
-  // Process queues data untuk tabel riwayat - SEPERTI DI DETAILCOUNTER.JSX
+  // Process queues data untuk tabel riwayat
   const processedQueues = useMemo(() => {
     if (!filteredQueues || !Array.isArray(filteredQueues)) return [];
 
@@ -323,20 +333,8 @@ export default function DetailCS() {
     const hasServingQueue = !!currentServingQueue;
     const hasNextQueue = !!nextQueue;
 
-    console.log("Status antrian:", {
-      hasWaitingQueue,
-      hasCalledQueue,
-      hasServingQueue,
-      hasNextQueue,
-      waitingCount: waitingQueues.length,
-      calledQueue,
-      currentServingQueue,
-      nextQueue,
-    });
-
     // 1. Skenario: ADA ANTRIAN BARU (menunggu)
     if (hasWaitingQueue && !hasCalledQueue && !hasServingQueue) {
-      console.log("Skenario 1: Ada antrian baru, tombol Panggil harus aktif");
       return {
         call: true, // Tombol Panggil AKTIF
         serve: false, // Layani tidak aktif
@@ -348,7 +346,6 @@ export default function DetailCS() {
 
     // 2. Skenario: ANTRIAN SUDAH DIPANGGIL (status: called)
     if (hasCalledQueue && !hasServingQueue) {
-      console.log("Skenario 2: Antrian sudah dipanggil");
       return {
         call: true, // Tombol Panggil Ulang AKTIF
         serve: true, // Layani AKTIF
@@ -360,7 +357,6 @@ export default function DetailCS() {
 
     // 3. Skenario: SEDANG DILAYANI (status: served)
     if (hasServingQueue) {
-      console.log("Skenario 3: Sedang dilayani");
       return {
         call: false, // Panggil Ulang tidak aktif
         serve: false, // Layani tidak aktif
@@ -372,7 +368,6 @@ export default function DetailCS() {
 
     // 4. Skenario: SETELAH SELESAI/BATAL
     if (!hasCalledQueue && !hasServingQueue && hasNextQueue) {
-      console.log("Skenario 4: Setelah selesai/batal, ada antrian berikutnya");
       return {
         call: false, // Panggil tidak aktif
         serve: false, // Layani tidak aktif
@@ -383,7 +378,6 @@ export default function DetailCS() {
     }
 
     // 5. Default: tidak ada antrian
-    console.log("Skenario 5: Tidak ada antrian");
     return {
       call: false,
       serve: false,
@@ -417,22 +411,6 @@ export default function DetailCS() {
     return `${hours.toString().padStart(2, "0")}:${minutes
       .toString()
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-  };
-
-  // Hitung estimasi waktu tunggu untuk antrian berikutnya
-  const calculateEstimatedWaitTime = (queue, index) => {
-    if (!queue.created_at) return "00:00:00";
-
-    const baseWaitTime = 5;
-    const estimatedMinutes = (index + 1) * baseWaitTime;
-
-    const hours = Math.floor(estimatedMinutes / 60);
-    const minutes = estimatedMinutes % 60;
-
-    if (hours > 0) {
-      return `${hours} jam ${minutes} menit`;
-    }
-    return `${minutes} menit`;
   };
 
   // ==================== FUNGSI WAKTU REALTIME UNTUK ANTRIAN ====================
@@ -505,7 +483,7 @@ export default function DetailCS() {
           return timeA - timeB; // Terlama ke terbaru
         }
       });
-  }, [filteredQueues, historySortOrder]); // Tambah dependency historySortOrder
+  }, [filteredQueues, historySortOrder]);
 
   // ==================== FUNGSI UNTUK KLIK ANTRIAN ====================
 
@@ -520,7 +498,7 @@ export default function DetailCS() {
       await callQueue(queue.id).unwrap();
       await playCallAudio(queue.queue_number, data.name, data.counter_code);
 
-      // Force refresh setelah 500ms
+      // WS akan handle refresh, tapi timeout kecil tetap aman untuk UX
       refreshTimeoutRef.current = setTimeout(() => {
         refetchQueues();
       }, 500);
@@ -543,7 +521,6 @@ export default function DetailCS() {
   const findFemaleIndonesianVoice = () => {
     if (!voices || voices.length === 0) return null;
 
-    // 1. Cari suara Indonesia perempuan (target utama)
     const indoFemale = voices.find(
       (voice) =>
         voice.lang.toLowerCase().startsWith("id") &&
@@ -554,9 +531,6 @@ export default function DetailCS() {
 
     if (indoFemale) return indoFemale;
 
-    // 2. Jika tidak ada suara Indonesia **perempuan**,
-    //    maka jangan pakai suara Indonesia LAKI-LAKI.
-    //    Ambil suara PEREMPUAN apa pun.
     const anyFemale = voices.find(
       (voice) =>
         !voice.name.toLowerCase().includes("male") &&
@@ -566,7 +540,6 @@ export default function DetailCS() {
 
     if (anyFemale) return anyFemale;
 
-    // 3. Fallback terakhir: pilih suara pertama
     return voices[0];
   };
 
@@ -582,11 +555,8 @@ export default function DetailCS() {
     try {
       setIsPlayingAudio(true);
 
-      // Format nomor antrian: sebutkan per karakter (huruf/angka)
       const formatNumberForSpeech = (num) => {
         if (!num || typeof num !== "string") return "nomor tidak diketahui";
-
-        // Ambil 6 karakter pertama dan 3 karakter terakhir
         const cleanNum = num.replace(/\s+/g, "");
         let finalNumber = cleanNum;
 
@@ -596,14 +566,11 @@ export default function DetailCS() {
           finalNumber = firstPart + lastPart;
         }
 
-        // Pisahkan setiap karakter dengan spasi untuk diucapkan satu per satu
         return finalNumber.split("").join(" ");
       };
 
-      // Format nama counter untuk pengucapan yang lebih jelas
       const formatCounterName = (name) => {
         if (!name) return "loket";
-        // Hilangkan karakter khusus dan ucapkan per kata
         return name.replace(/[^a-zA-Z0-9\s]/g, " ").replace(/\s+/g, " ");
       };
 
@@ -611,42 +578,24 @@ export default function DetailCS() {
       const formattedCounter = formatCounterName(counterName);
       const counterNumber = getCounterNumber(counterCode);
 
-      // Text yang akan diucapkan - MENYEBUTKAN NAMA PELAYANAN DAN NOMOR LOKET
       const textToSpeak = `Nomor antrian ${formattedNumber}, untuk layanan ${formattedCounter}, silakan menuju loket ${counterNumber}`;
-
-      console.log("Memanggil antrian:", {
-        original: queueNumber,
-        formatted: formattedNumber,
-        service: formattedCounter,
-        counter: counterNumber,
-        textToSpeak,
-      });
 
       if ("speechSynthesis" in window) {
         window.speechSynthesis.cancel();
 
         const utterance = new SpeechSynthesisUtterance(textToSpeak);
         utterance.lang = "id-ID";
-        utterance.rate = 0.7; // Kecepatan sedang untuk kejelasan
-        utterance.pitch = 9; // Pitch sedikit lebih tinggi untuk suara perempuan
+        utterance.rate = 0.7;
+        utterance.pitch = 9;
         utterance.volume = 1;
 
         const selectedVoice = findFemaleIndonesianVoice();
         if (selectedVoice) {
           utterance.voice = selectedVoice;
-          console.log(
-            "Using voice:",
-            selectedVoice.name,
-            "Language:",
-            selectedVoice.lang
-          );
-        } else {
-          console.warn("No suitable voice found, using default settings");
         }
 
         utterance.onend = () => {
           setIsPlayingAudio(false);
-          console.log("Audio panggilan selesai");
         };
 
         utterance.onerror = (event) => {
@@ -659,7 +608,6 @@ export default function DetailCS() {
           );
         };
 
-        // Tunggu sebentar sebelum memulai speech untuk memastikan voices loaded
         setTimeout(() => {
           window.speechSynthesis.speak(utterance);
         }, 200);
@@ -669,6 +617,7 @@ export default function DetailCS() {
     } catch (error) {
       console.error("Error memutar audio:", error);
       setIsPlayingAudio(false);
+      const formatNumberForSpeech = (num) => num?.split("").join(" ") || num;
       const formattedNumber = formatNumberForSpeech(queueNumber);
       const counterNumber = getCounterNumber(counterCode);
       showPopup(
@@ -683,16 +632,11 @@ export default function DetailCS() {
   const handleCallAction = async () => {
     let queueToCall;
 
-    // Jika ada antrian yang sudah dipanggil, gunakan itu untuk panggil ulang
     if (calledQueue) {
       queueToCall = calledQueue;
-    }
-    // Jika ada antrian yang sedang dilayani, gunakan itu untuk panggil ulang
-    else if (currentServingQueue) {
+    } else if (currentServingQueue) {
       queueToCall = currentServingQueue;
-    }
-    // Jika ada antrian berikutnya, panggil yang baru
-    else if (nextQueue) {
+    } else if (nextQueue) {
       queueToCall = nextQueue;
     }
 
@@ -740,17 +684,12 @@ export default function DetailCS() {
     try {
       setIsServing(true);
 
-      // Jika antrian belum dipanggil, panggil dulu
       if (queueToServe.status === "waiting") {
         await callQueue(queueToServe.id).unwrap();
-        // Tunggu sebentar untuk memastikan data ter-update
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // Update status antrian menjadi 'served'
       await serveQueue(queueToServe.id).unwrap();
-
-      // Force immediate refresh
       await refetchQueues();
 
       showPopup(
@@ -770,7 +709,6 @@ export default function DetailCS() {
     }
   };
 
-  // Fungsi handleDoneQueue yang hanya menjalankan API done tanpa memanggil antrian berikutnya
   const handleDoneQueue = async () => {
     const queueToComplete = currentServingQueue;
 
@@ -781,20 +719,13 @@ export default function DetailCS() {
 
     try {
       setIsCompleting(true);
-
       const queueNumber = formatQueueNumber(queueToComplete.queue_number);
-      console.log("Menyelesaikan antrian:", queueToComplete.id, queueNumber);
 
-      // Step 1: Update status menjadi 'done' saja tanpa memanggil antrian berikutnya
       await doneQueue(queueToComplete.id).unwrap();
-
-      // Step 2: Immediate refresh
       await refetchQueues();
 
-      // Step 3: Refresh kedua setelah delay kecil
       refreshTimeoutRef.current = setTimeout(async () => {
         await refetchQueues();
-        console.log("Refresh completed for:", queueNumber);
       }, 200);
 
       showPopup(`Menyelesaikan layanan untuk antrian ${queueNumber}`);
@@ -863,7 +794,6 @@ export default function DetailCS() {
     } catch (error) {
       console.error("Error memanggil antrian berikutnya:", error);
       if (error.status === 404 || error.status === 400) {
-        // Fallback ke manual call
         if (nextQueue) {
           await callQueue(nextQueue.id).unwrap();
           await playCallAudio(
@@ -899,8 +829,6 @@ export default function DetailCS() {
     };
   }, []);
 
-  // ==================== HELPER FUNCTIONS ====================
-
   // Helper function untuk format queue number
   const formatQueueNumber = (queueNumber) => {
     if (!queueNumber) return "-";
@@ -918,7 +846,6 @@ export default function DetailCS() {
     isCallingNext ||
     isPlayingAudio;
 
-  // PERBAIKAN: Handle error dengan lebih baik
   if (counterError) {
     return (
       <div className="p-6 text-center text-red-600">
@@ -1433,7 +1360,7 @@ export default function DetailCS() {
         )}
       </div>
 
-      {/* ================= RIWAYAT AKTIVITAS - SEPERTI DI DETAILCOUNTER.JSX ================= */}
+      {/* ================= RIWAYAT AKTIVITAS ================= */}
       <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-6 shadow-lg">
         <h2 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-[#004A9F] to-[#0066CC] bg-clip-text text-transparent mb-4 sm:mb-6">
           Riwayat Aktivitas ({processedQueues.length} antrean)
@@ -1579,7 +1506,7 @@ export default function DetailCS() {
         )}
       </div>
 
-      {/* Custom CSS dari DetailCounter.jsx */}
+      {/* Custom CSS */}
       <style>{`
         .custom-calendar .p-calendar .p-inputtext {
           border: none !important;

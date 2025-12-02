@@ -8,6 +8,8 @@ import {
   useCreateQueueMutation,
   useGetQueuesQuery,
 } from "../../features/queues/queueApi";
+// Import hook WebSocket (Sesuaikan path jika berbeda)
+import { useWebSocket } from "../../hooks/useWebSocket";
 
 const AmbilAntrean = () => {
   const [visible, setVisible] = useState(false);
@@ -17,7 +19,7 @@ const AmbilAntrean = () => {
   const [errorMessage, setErrorMessage] = useState("");
   const [services, setServices] = useState([]);
   const [serviceStatus, setServiceStatus] = useState({});
-  const [remainingQuotas, setRemainingQuotas] = useState({}); // State baru untuk sisa kuota
+  const [remainingQuotas, setRemainingQuotas] = useState({});
   const toast = useRef(null);
 
   const lastUsedCounterRef = useRef(new Map());
@@ -31,19 +33,30 @@ const AmbilAntrean = () => {
     error: countersError,
   } = useGetCountersQuery();
 
-  // Ambil data antrian hari ini untuk cek kuota - simpan di ref
-  const { data: todayQueues = [] } = useGetQueuesQuery({
+  // Ambil data antrian hari ini
+  // PERUBAHAN: Ambil fungsi 'refetch' untuk update manual saat ada WebSocket event
+  const { 
+    data: todayQueues = [], 
+    refetch: refetchQueues 
+  } = useGetQueuesQuery({
     date: new Date().toISOString().split("T")[0],
   });
 
-  // Simpan todayQueues ke ref
+  // INTEGRASI WEBSOCKET
+  // Setiap kali ada event 'QueueUpdated' dari server, kita refresh data antrian
+  useWebSocket((data) => {
+    console.log("WebSocket Event received in AmbilAntrean:", data);
+    // Refresh data dari API agar sisa kuota update
+    refetchQueues(); 
+  });
+
+  // Simpan todayQueues ke ref agar bisa diakses di dalam logic tanpa re-render berlebih
   useEffect(() => {
     todayQueuesRef.current = Array.isArray(todayQueues) ? todayQueues : [];
   }, [todayQueues]);
 
   // Mutation untuk membuat antrean baru
-  const [createQueue, { isLoading: isCreatingQueue }] =
-    useCreateQueueMutation();
+  const [createQueue, { isLoading: isCreatingQueue }] = useCreateQueueMutation();
 
   // Helper function untuk extract nomor loket
   const extractCounterNumber = (counterCode) => {
@@ -156,7 +169,7 @@ const AmbilAntrean = () => {
     calculateServiceStatus(serviceMap);
     // Hitung sisa kuota initial
     calculateRemainingQuotas(serviceMap);
-  }, [counters]); // HANYA counters sebagai dependency
+  }, [counters]); 
 
   // Effect terpisah untuk update status dan sisa kuota ketika todayQueues berubah
   useEffect(() => {
@@ -164,7 +177,7 @@ const AmbilAntrean = () => {
       calculateServiceStatus(serviceDataRef.current);
       calculateRemainingQuotas(serviceDataRef.current);
     }
-  }, [todayQueues]); // HANYA todayQueues sebagai dependency
+  }, [todayQueues, services]); // Tambahkan services ke dependency agar sync
 
   // Fungsi untuk menghitung status service
   const calculateServiceStatus = (serviceMap) => {
@@ -295,6 +308,8 @@ const AmbilAntrean = () => {
 
   // Fungsi untuk refresh status dan sisa kuota (digunakan setelah create queue)
   const refreshServiceStatus = () => {
+    // Fungsi ini tetap ada untuk update lokal cepat, tapi refetchQueues akan menangani sync data server
+    refetchQueues(); 
     if (serviceDataRef.current) {
       calculateServiceStatus(serviceDataRef.current);
       calculateRemainingQuotas(serviceDataRef.current);
@@ -445,7 +460,7 @@ const AmbilAntrean = () => {
             // Refresh status dan sisa kuota setelah berhasil mengambil antrian
             setTimeout(() => {
               refreshServiceStatus();
-            }, 1000);
+            }, 500); // Sedikit delay agar data server sempat update
           } else {
             throw new Error("No queue number received");
           }
