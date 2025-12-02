@@ -3,6 +3,7 @@ import { InputText } from "primereact/inputtext";
 import { Password } from "primereact/password";
 import { Button } from "primereact/button";
 import { useNavigate } from "react-router-dom";
+import { useRegisterMutation } from "../features/auth/authApi";
 import "primereact/resources/themes/lara-light-indigo/theme.css";
 import "primereact/resources/primereact.min.css";
 
@@ -13,37 +14,40 @@ const Register = () => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [register, { isLoading }] = useRegisterMutation();
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
 
-    // Validasi field kosong
     if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
       setError("Semua field wajib diisi!");
-      setLoading(false);
       return;
     }
 
     if (password !== confirmPassword) {
       setError("Password tidak cocok!");
-      setLoading(false);
       return;
     }
 
-    // Simulasi proses registrasi
-    setTimeout(() => {
-      setError("");
+    try {
+      const res = await register({ name, email, password }).unwrap();
+      console.log("Register success:", res);
       alert("Registrasi berhasil! Silakan login.");
       navigate("/login");
-      setLoading(false);
-    }, 1000);
+    } catch (err) {
+      console.error("Register error:", err);
+      if (err?.data?.errors) {
+        const messages = Object.values(err.data.errors).flat().join(", ");
+        setError(messages || "Validasi gagal, periksa kembali data Anda.");
+      } else {
+        setError(err?.data?.message || "Gagal melakukan registrasi.");
+      }
+    }
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-50">
+    <div className="flex justify-center items-center min-h-screen bg-gray-50 px-4">
       <div className="px-6 py-2 w-full max-w-md bg-white shadow-lg rounded-3xl border-t-4 border-sky-900/60">
         {/* Logo */}
         <div className="text-center mb-6">
@@ -58,19 +62,19 @@ const Register = () => {
         {/* Greeting */}
         <div className="text-center mb-6">
           <h2 className="text-xl font-semibold text-sky-900/80 mb-1">
-            Create Account
+            Buat Akun Baru
           </h2>
           <p className="text-gray-500 text-sm">
-            Please fill in the information below
+            Tolong isi formulir di bawah untuk membuat akun Anda.
           </p>
         </div>
 
         {/* Form */}
         <form onSubmit={handleRegister} className="space-y-5">
-          {/* Full Name Field */}
+          {/* Full Name */}
           <div className="space-y-2">
             <label className="block text-sky-900/80 font-medium text-sm">
-              Full Name
+              Nama Lengkap
             </label>
             <div className="p-inputgroup border-1 border-gray-300 rounded-lg overflow-hidden focus-within:border-sky-900 transition-colors duration-200">
               <span className="p-inputgroup-addon bg-gray-50 border-0">
@@ -79,14 +83,14 @@ const Register = () => {
               <InputText
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Enter your name"
+                placeholder="Masukkan nama lengkap"
                 className="w-full p-3 border-0 focus:shadow-none"
-                disabled={loading}
+                disabled={isLoading}
               />
             </div>
           </div>
 
-          {/* Email Field */}
+          {/* Email */}
           <div className="space-y-2">
             <label className="block text-sky-900/80 font-medium text-sm">
               Email
@@ -98,14 +102,14 @@ const Register = () => {
               <InputText
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email address"
+                placeholder="Masukkan alamat email"
                 className="w-full p-3 border-0 focus:shadow-none"
-                disabled={loading}
+                disabled={isLoading}
               />
             </div>
           </div>
 
-          {/* Password Field */}
+          {/* Password */}
           <div className="space-y-2">
             <label className="block text-sky-900/80 font-medium text-sm">
               Password
@@ -121,15 +125,15 @@ const Register = () => {
                 feedback={false}
                 className="w-full border-0"
                 inputClassName="w-full p-3 border-0 focus:shadow-none"
-                disabled={loading}
+                disabled={isLoading}
               />
             </div>
           </div>
 
-          {/* Confirm Password Field */}
+          {/* Confirm Password */}
           <div className="space-y-2">
             <label className="block text-sky-900/80 font-medium text-sm">
-              Confirm Password
+              Konfirmasi Password
             </label>
             <div className="p-inputgroup border-1 border-gray-300 rounded-lg overflow-hidden focus-within:border-sky-900 transition-colors duration-200">
               <span className="p-inputgroup-addon bg-gray-50 border-0">
@@ -138,16 +142,16 @@ const Register = () => {
               <Password
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter password"
+                placeholder="Masukkan kembali password"
                 feedback={false}
                 className="w-full border-0"
                 inputClassName="w-full p-3 border-0 focus:shadow-none"
-                disabled={loading}
+                disabled={isLoading}
               />
             </div>
           </div>
 
-          {/* Error Message */}
+          {/* Error */}
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-red-600 text-sm font-medium text-center flex items-center justify-center gap-2">
@@ -157,23 +161,23 @@ const Register = () => {
             </div>
           )}
 
-          {/* Register Button */}
+          {/* Button */}
           <Button
             type="submit"
-            label="Register"
-            loading={loading}
-            disabled={!name || !email || !password || !confirmPassword || loading}
+            label={isLoading ? "Loading..." : "Daftar"}
+            loading={isLoading}
+            disabled={!name || !email || !password || !confirmPassword || isLoading}
             className="w-full bg-sky-900 hover:bg-sky-800 border-sky-900 text-white text-lg font-semibold rounded-xl py-3 mt-2 transition-all duration-200 shadow-md hover:shadow-lg"
           />
 
-          {/* Back to Login Link */}
+          {/* Back to Login */}
           <p className="text-center text-sm text-gray-600 mt-4">
-            Already have an account?{" "}
+            Apakah sudah memiliki akun?{" "}
             <a
               href="/login"
               className="text-sky-900/80 font-semibold hover:text-sky-900 transition hover:underline"
             >
-              Login
+              Masuk
             </a>
           </p>
         </form>
