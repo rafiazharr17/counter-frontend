@@ -370,6 +370,51 @@ export default function DetailCS() {
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
+  // ==================== FUNGSI UNTUK RIWAYAT TERBARU ====================
+
+  // Hitung durasi total dari waiting ke selesai/batal
+  const calculateTotalDuration = (queue) => {
+    if (!queue.created_at) return "00:00:00";
+    
+    let endTime;
+    if (queue.status === "done" && queue.done_at) {
+      endTime = new Date(queue.done_at);
+    } else if (queue.status === "canceled" && queue.canceled_at) {
+      endTime = new Date(queue.canceled_at);
+    } else {
+      return "00:00:00";
+    }
+    
+    const startTime = new Date(queue.created_at);
+    const diffMs = endTime - startTime;
+
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+    return `${hours.toString().padStart(2, "0")}:${minutes
+      .toString()
+      .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  // Antrian yang sudah selesai atau batal untuk riwayat terbaru
+  const completedOrCanceledQueues = useMemo(() => {
+    return filteredQueues
+      .filter(queue => queue.status === "done" || queue.status === "canceled")
+      .sort((a, b) => {
+        // Urutkan berdasarkan waktu terbaru (descending)
+        const getEndTime = (queue) => {
+          if (queue.status === "done" && queue.done_at) return new Date(queue.done_at);
+          if (queue.status === "canceled" && queue.canceled_at) return new Date(queue.canceled_at);
+          return new Date(0);
+        };
+        
+        const timeA = getEndTime(a);
+        const timeB = getEndTime(b);
+        return timeB - timeA;
+      });
+  }, [filteredQueues]);
+
   // ==================== FUNGSI UNTUK KLIK ANTRIAN ====================
 
   // Fungsi untuk memanggil antrian yang diklik
@@ -619,6 +664,7 @@ export default function DetailCS() {
     }
   };
 
+  // PERBAIKAN: Fungsi handleDoneQueue yang hanya menjalankan API done tanpa memanggil antrian berikutnya
   const handleDoneQueue = async () => {
     const queueToComplete = currentServingQueue;
 
@@ -631,19 +677,18 @@ export default function DetailCS() {
       setIsCompleting(true);
 
       const queueNumber = formatQueueNumber(queueToComplete.queue_number);
-
       console.log("Menyelesaikan antrian:", queueToComplete.id, queueNumber);
 
-      // Step 1: Update status menjadi 'done'
+      // Step 1: Update status menjadi 'done' saja tanpa memanggil antrian berikutnya
       await doneQueue(queueToComplete.id).unwrap();
 
-      // Step 2: Immediate refresh pertama
+      // Step 2: Immediate refresh
       await refetchQueues();
 
-      // Step 3: Refresh kedua setelah delay kecil untuk memastikan cache ter-update
+      // Step 3: Refresh kedua setelah delay kecil
       refreshTimeoutRef.current = setTimeout(async () => {
         await refetchQueues();
-        console.log("Second refresh completed for:", queueNumber);
+        console.log("Refresh completed for:", queueNumber);
       }, 200);
 
       showPopup(`Menyelesaikan layanan untuk antrian ${queueNumber}`);
@@ -1058,52 +1103,62 @@ export default function DetailCS() {
             )}
           </div>
 
-          {/* List Antrian Berikutnya */}
+          {/* Riwayat Terbaru - Antrian Selesai/Batal */}
           <div>
             <h4 className="text-md font-semibold text-slate-800 mb-3">
-              Antrian Berikutnya ({waitingQueues.length})
+              Riwayat Terbaru ({completedOrCanceledQueues.length})
             </h4>
-            <div className="space-y-2 max-h-32 overflow-y-auto">
-              {waitingQueues.length > 0 ? (
-                waitingQueues.slice(0, 5).map((queue, index) => (
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {completedOrCanceledQueues.length > 0 ? (
+                completedOrCanceledQueues.slice(0, 10).map((queue) => (
                   <div
                     key={queue.id}
-                    className={`flex justify-between items-center p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
-                      processingQueueId === queue.id
-                        ? "bg-blue-100 border-blue-300 animate-pulse"
-                        : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-200"
-                    }`}
-                    onClick={() => handleCallQueue(queue)}>
+                    className={`flex justify-between items-center p-3 rounded-lg border transition-all duration-200 ${
+                      queue.status === "done"
+                        ? "bg-green-50 border-green-200"
+                        : "bg-red-50 border-red-200"
+                    }`}>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-slate-700">
                         #{formatQueueNumber(queue.queue_number)}
                       </span>
                       <span
                         className={`text-xs px-2 py-1 rounded ${
-                          queue.status === "called"
-                            ? "bg-orange-100 text-orange-700"
-                            : "bg-slate-100 text-slate-600"
+                          queue.status === "done"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
                         }`}>
-                        {queue.status === "called" ? "Dipanggil" : "Menunggu"}
+                        {queue.status === "done" ? "Selesai" : "Batal"}
                       </span>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-mono text-blue-600 font-semibold">
-                        {calculateRealtimeWaiting(queue)}
+                      <div className={`text-xs font-mono font-semibold ${
+                        queue.status === "done" ? "text-green-600" : "text-red-600"
+                      }`}>
+                        {calculateTotalDuration(queue)}
                       </div>
                       <div className="text-xs text-slate-500">
-                        Estimasi: {calculateEstimatedWaitTime(queue, index)}
+                        {queue.status === "done" && queue.done_at
+                          ? new Date(queue.done_at).toLocaleTimeString("id-ID")
+                          : queue.canceled_at
+                          ? new Date(queue.canceled_at).toLocaleTimeString("id-ID")
+                          : ""}
                       </div>
                     </div>
                   </div>
                 ))
               ) : (
                 <div className="text-center p-4 bg-slate-50 rounded-lg border border-slate-200">
-                  <i className="pi pi-inbox text-slate-400 text-xl mb-2"></i>
+                  <i className="pi pi-history text-slate-400 text-xl mb-2"></i>
                   <p className="text-slate-500 text-sm">
-                    Tidak ada antrian berikutnya
+                    Belum ada riwayat penyelesaian atau pembatalan
                   </p>
                 </div>
+              )}
+              {completedOrCanceledQueues.length > 10 && (
+                <p className="text-xs text-slate-500 text-center py-2">
+                  +{completedOrCanceledQueues.length - 10} riwayat lainnya
+                </p>
               )}
             </div>
           </div>
