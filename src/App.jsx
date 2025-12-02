@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import AdminLayout from "./layouts/AdminLayout";
 
-// COUNTERS
 import HomeCounter from "./pages/admin/counters/HomeCounter";
 import DetailCounter from "./pages/admin/counters/DetailCounter";
 import AddCounter from "./pages/admin/counters/AddCounter";
@@ -14,6 +13,7 @@ import DashboardCS from "./pages/cs/DashboardCS";
 import EditCS from "./pages/cs/EditCS";
 import DetailCS from "./pages/cs/DetailCS";
 import DisplayScreen from "./pages/cs/DisplayScreen";
+import RestoreCounter from "./pages/admin/counters/RestoreCounter";
 
 // Placeholders
 function AdminDashboard() {
@@ -42,6 +42,7 @@ export default function App() {
         <Route path="counters/new" element={<AddCounter />} />
         <Route path="counters/:id" element={<DetailCounter />} />
         <Route path="counters/:id/edit" element={<EditCounter />} />
+        <Route path="counters/restore" element={<RestoreCounter />} />
 
         <Route path="users" element={<UsersHome />} />
         <Route path="roles" element={<RolesHome />} />
@@ -49,8 +50,8 @@ export default function App() {
 
       {/* CUSTOMER SERVICE */}
       <Route path="/cs" element={<DashboardCS />} />
-      <Route path="/cs/:id/edit" element={<EditCS />} />
-      <Route path="/cs/:id" element={<DetailCS />} />
+      <Route path="/cs/counters/:id" element={<DetailCS />} />
+      <Route path="/cs/counters/:id/edit" element={<EditCS />} />
       <Route path="/cs/display" element={<DisplayScreen />} />
 
       {/* GUEST */}

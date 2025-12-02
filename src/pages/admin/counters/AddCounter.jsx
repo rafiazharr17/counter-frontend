@@ -14,11 +14,8 @@ import { Toast } from "primereact/toast";
 import {
   useAddCounterMutation,
   useGetCountersQuery,
+  useGetTrashedCountersQuery,
 } from "../../../features/counters/counterApi";
-
-/* =========================
-   Helpers
-========================= */
 
 // debounce hook (500ms default)
 function useDebounce(value, delay = 500) {
@@ -45,21 +42,47 @@ function buildPrefixFromName(name) {
 }
 
 // get next 3-digit code from existing counters list with given prefix
-function getNextThreeDigitCode(prefix, counters) {
+// PERBAIKAN: Cari kode yang tersedia (termasuk yang dari counter yang dihapus)
+function getNextAvailableCode(prefix, activeCounters = [], trashedCounters = []) {
   if (!prefix || prefix.length < 1) return "";
-  const nums = (counters || [])
-    .map((c) => c.counter_code)
-    .filter((code) => typeof code === "string" && code.startsWith(`${prefix}-`))
-    .map((code) => {
-      const n = parseInt(code.split("-")[1], 10);
-      return Number.isFinite(n) ? n : null;
-    })
-    .filter((n) => n !== null);
 
-  const last = nums.length ? Math.max(...nums) : 0;
-  const next = last + 1;
-  if (next > 999) return "__MAX__"; // trigger error
-  return `${prefix}-${String(next).padStart(3, "0")}`;
+  console.log("Active counters:", activeCounters);
+  console.log("Trashed counters:", trashedCounters);
+
+  // Gabungkan semua kode counter yang ada (aktif + dihapus)
+  const allUsedCodes = [
+    ...activeCounters.map(c => c.counter_code),
+    ...trashedCounters.map(c => c.counter_code)
+  ].filter(code => typeof code === "string" && code.startsWith(`${prefix}-`));
+
+  console.log("All used codes for prefix", prefix, ":", allUsedCodes);
+
+  // Cari semua nomor yang sudah digunakan
+  const usedNumbers = allUsedCodes
+    .map((code) => {
+      const parts = code.split("-");
+      if (parts.length >= 2) {
+        const n = parseInt(parts[1], 10);
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    })
+    .filter((n) => n !== null)
+    .sort((a, b) => a - b);
+
+  console.log("Used numbers:", usedNumbers);
+
+  // Cari gap/kekosongan dalam urutan angka
+  for (let i = 1; i <= 999; i++) {
+    if (!usedNumbers.includes(i)) {
+      const result = `${prefix}-${String(i).padStart(3, "0")}`;
+      console.log("Found available code:", result);
+      return result;
+    }
+  }
+
+  // Jika semua angka 1-999 sudah digunakan
+  return "__MAX__";
 }
 
 // date -> "HH:mm:ss"
@@ -71,14 +94,10 @@ function toHms(dateObj) {
   return `${h}:${m}:${s}`;
 }
 
-/* =========================
-   Zod Schema - SEMUA FIELD WAJIB
-========================= */
-
 const schema = z.object({
   counter_code: z
     .string()
-    .min(1, "Kode Counter wajib diisi")
+    .min(1, "Kode Loket wajib diisi")
     .regex(/^[A-Z]{2}-\d{3}$/, "Format harus XX-000 (huruf besar & 3 digit)"),
   name: z.string().min(2, "Nama Layanan wajib diisi (minimal 2 karakter)"),
   description: z.string().min(1, "Deskripsi wajib diisi"),
@@ -94,7 +113,9 @@ export default function AddCounter() {
   const navigate = useNavigate();
   const toast = useRef(null);
 
-  const { data: counters = [] } = useGetCountersQuery();
+  // Ambil counter aktif dan yang dihapus
+  const { data: activeCounters = [] } = useGetCountersQuery();
+  const { data: trashedCounters = [] } = useGetTrashedCountersQuery();
 
   // Auto-suggest code
   const [userEditedCode, setUserEditedCode] = useState(false);
@@ -126,7 +147,6 @@ export default function AddCounter() {
     setError,
     clearErrors,
     formState: { errors, isSubmitting },
-    reset,
     trigger,
   } = useForm({
     resolver: zodResolver(schema),
@@ -143,7 +163,7 @@ export default function AddCounter() {
 
   const [addCounter, { isLoading: isSaving }] = useAddCounterMutation();
 
-  // Auto suggest counter_code berdasarkan name
+  // Auto suggest counter_code berdasarkan name - PERBAIKAN: gunakan fungsi baru
   useEffect(() => {
     if (!debouncedName) {
       setValue("counter_code", "");
@@ -151,7 +171,9 @@ export default function AddCounter() {
       return;
     }
     if (userEditedCode) return;
-    const suggestion = getNextThreeDigitCode(prefix, counters || []);
+    
+    const suggestion = getNextAvailableCode(prefix, activeCounters, trashedCounters);
+    
     if (suggestion === "__MAX__") {
       setError("counter_code", {
         type: "manual",
@@ -159,6 +181,7 @@ export default function AddCounter() {
       });
       return;
     }
+    
     if (suggestion) {
       clearErrors("counter_code");
       setValue("counter_code", suggestion);
@@ -170,7 +193,8 @@ export default function AddCounter() {
   }, [
     debouncedName,
     prefix,
-    counters,
+    activeCounters,
+    trashedCounters,
     userEditedCode,
     setValue,
     setError,
@@ -205,7 +229,7 @@ export default function AddCounter() {
   const onSubmit = async (values) => {
     setIsSubmitted(true);
 
-    // Tandai semua field sebagai touched saat submit
+    // tandai semua field sebagai touched
     setTouchedFields({
       quota: true,
       name: true,
@@ -215,7 +239,7 @@ export default function AddCounter() {
       schedule_end: true,
     });
 
-    // Trigger validation untuk semua field
+    // Validasi manual
     const isValid = await trigger();
     if (!isValid) {
       toast.current.show({
@@ -226,6 +250,7 @@ export default function AddCounter() {
       return;
     }
 
+    // Payload ke backend
     const payload = {
       counter_code: values.counter_code,
       name: values.name,
@@ -234,68 +259,94 @@ export default function AddCounter() {
       schedule_start: toHms(values.schedule_start),
       schedule_end: toHms(values.schedule_end),
     };
+    
+    console.log("Submitting payload:", payload);
+    
+    const result = await addCounter(payload);
 
-    try {
-      await addCounter(payload).unwrap();
+    // Jika sukses
+    if (result?.data) {
       toast.current.show({
         severity: "success",
         summary: "Berhasil",
-        detail: "Counter berhasil ditambahkan.",
+        detail: "Loket berhasil ditambahkan.",
       });
-      setTimeout(() => navigate("/admin/counters"), 450);
-    } catch (err) {
-      const msg =
-        err?.data?.message ||
-        err?.message ||
-        "Gagal menambahkan counter. Periksa kembali input Anda.";
 
-      // mapping error field jika ada
-      if (err?.data?.errors) {
-        Object.entries(err.data.errors).forEach(([field, messages]) => {
-          setError(field, {
-            type: "server",
-            message: String(messages?.[0] || msg),
-          });
+      setTimeout(() => {
+        navigate("/admin/counters");
+      }, 400);
+
+      return;
+    }
+
+    // Jika error
+    const msg =
+      result?.error?.data?.message ||
+      result?.error?.message ||
+      "Gagal menambahkan loket. Periksa kembali input Anda.";
+
+    // Mapping error field (jika tersedia)
+    if (result?.error?.data?.errors) {
+      Object.entries(result.error.data.errors).forEach(([field, messages]) => {
+        setError(field, {
+          type: "server",
+          message: String(messages?.[0] || msg),
         });
-      }
-
-      toast.current.show({
-        severity: "error",
-        summary: "Gagal",
-        detail: msg,
       });
     }
+
+    toast.current.show({
+      severity: "error",
+      summary: "Gagal",
+      detail: msg,
+    });
   };
 
   return (
     <div className="space-y-5">
       <Toast ref={toast} />
 
-      {/* TOP APP BAR (HDR-B) */}
-      <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-sm">
-        <div className="flex items-center h-10 px-3 md:px-4 border-b border-slate-200">
-          <div className="text-base md:text-lg font-semibold text-[#004A9F] tracking-wide">
-            Tambah Counter
+      {/* TOP APP BAR */}
+      <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-sm border-b border-slate-200">
+        <div className="flex items-center justify-between h-14 px-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <Button
+              icon="pi pi-arrow-left"
+              className="p-button-text p-button-sm !text-slate-600 hover:!bg-slate-100"
+              onClick={() => navigate("/admin/counters")}
+            />
+            <div>
+              <h1 className="text-lg sm:text-xl font-semibold text-[#004A9F]">
+                Tambah Loket
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 hidden sm:block">
+                Tambah loket layanan baru
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
       {/* CONTAINER */}
-      <div className="max-w-6xl mx-auto px-3 md:px-4">
-        {/* SPLIT PANELS (C2) */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
+        {/* SPLIT PANELS */}
         <form
           onSubmit={handleSubmit(onSubmit)}
-          className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
+          
           {/* LEFT CARD — Informasi Layanan */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm shadow-sm p-6">
-            <div className="mb-2">
-              <h3 className="text-lg font-semibold text-slate-800 mb-1">
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm shadow-sm p-4 sm:p-6">
+            <div className="mb-4 sm:mb-6">
+              <h3 className="text-base sm:text-lg font-semibold text-slate-800 mb-1">
                 Informasi Layanan
               </h3>
+              <p className="text-xs sm:text-sm text-slate-500">
+                Informasi dasar tentang layanan loket
+              </p>
             </div>
 
             {/* Nama Layanan */}
-            <div className="mb-5">
+            <div className="mb-4 sm:mb-5">
               <label className="block text-sm font-semibold mb-2 text-slate-700">
                 Nama Layanan <span className="text-red-500">*</span>
               </label>
@@ -313,7 +364,7 @@ export default function AddCounter() {
                     }}
                     onBlur={() => handleFieldTouch("name")}
                     placeholder="Contoh: BPJS, Disdukcapil, Samsat"
-                    className={`w-full px-4 py-3 rounded-xl border transition-colors ${
+                    className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg sm:rounded-xl border transition-colors text-sm sm:text-base ${
                       shouldShowError("name")
                         ? "border-red-500 bg-red-50"
                         : "border-slate-300 hover:border-slate-400 focus:border-[#004A9F]"
@@ -322,22 +373,21 @@ export default function AddCounter() {
                 )}
               />
               {shouldShowError("name") && (
-                <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                  <i className="pi pi-exclamation-circle text-sm"></i>
+                <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                  <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                   {errors.name.message}
                 </p>
               )}
             </div>
 
-            {/* Kode Counter */}
-            <div className="mb-5">
-              <div className="flex items-center justify-between mb-2">
+            {/* Kode Loket */}
+            <div className="mb-4 sm:mb-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                 <label className="block text-sm font-semibold text-slate-700">
-                  Kode Counter <span className="text-red-500">*</span>
+                  Kode Loket <span className="text-red-500">*</span>
                 </label>
-                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
-                  Format:{" "}
-                  <span className="font-mono font-semibold">XX-000</span>
+                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                  Format: <span className="font-mono font-semibold">XX-000</span>
                 </span>
               </div>
               <Controller
@@ -355,7 +405,7 @@ export default function AddCounter() {
                     }}
                     onBlur={() => handleFieldTouch("counter_code")}
                     placeholder="XX-000"
-                    className={`w-full px-4 py-3 rounded-xl border transition-colors uppercase font-medium ${
+                    className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg sm:rounded-xl border transition-colors uppercase font-medium text-sm sm:text-base ${
                       shouldShowError("counter_code")
                         ? "border-red-500 bg-red-50"
                         : "border-slate-300 hover:border-slate-400 focus:border-[#004A9F]"
@@ -364,15 +414,19 @@ export default function AddCounter() {
                 )}
               />
               {shouldShowError("counter_code") ? (
-                <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                  <i className="pi pi-exclamation-circle text-sm"></i>
+                <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                  <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                   {errors.counter_code.message}
                 </p>
               ) : (
                 <p className="mt-2 text-xs text-slate-500 flex items-center gap-1">
-                  <i className="pi pi-info-circle text-slate-400"></i>
-                  Otomatis: 2 huruf dari nama layanan + 3 digit (001–999). Bisa
-                  diedit manual.
+                  <i className="pi pi-info-circle text-slate-400 text-xs"></i>
+                  Otomatis: 2 huruf dari nama layanan + mencari kode yang tersedia
+                  {trashedCounters.length > 0 && (
+                    <span className="text-green-600 ml-1">
+                      • Dapat menggunakan kode dari loket yang dihapus
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -389,14 +443,14 @@ export default function AddCounter() {
                   <InputTextarea
                     {...field}
                     autoResize
-                    rows={4}
+                    rows={3}
                     placeholder="Tuliskan informasi singkat mengenai layanan ini..."
                     onChange={(e) => {
                       field.onChange(e.target.value);
                       if (isSubmitted) trigger("description");
                     }}
                     onBlur={() => handleFieldTouch("description")}
-                    className={`w-full px-4 py-3 rounded-xl border transition-colors ${
+                    className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg sm:rounded-xl border transition-colors text-sm sm:text-base ${
                       shouldShowError("description")
                         ? "border-red-500 bg-red-50"
                         : "border-slate-300 hover:border-slate-400 focus:border-[#004A9F]"
@@ -405,8 +459,8 @@ export default function AddCounter() {
                 )}
               />
               {shouldShowError("description") && (
-                <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                  <i className="pi pi-exclamation-circle text-sm"></i>
+                <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                  <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                   {errors.description.message}
                 </p>
               )}
@@ -414,15 +468,18 @@ export default function AddCounter() {
           </div>
 
           {/* RIGHT CARD — Jadwal & Kuota */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm shadow-sm p-6">
-            <div className="mb-2">
-              <h3 className="text-lg font-semibold text-slate-800 mb-1">
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm shadow-sm p-4 sm:p-6">
+            <div className="mb-4 sm:mb-6">
+              <h3 className="text-base sm:text-lg font-semibold text-slate-800 mb-1">
                 Jadwal & Kuota
               </h3>
+              <p className="text-xs sm:text-sm text-slate-500">
+                Pengaturan jadwal operasional dan kuota
+              </p>
             </div>
 
             {/* Kuota */}
-            <div className="mb-5">
+            <div className="mb-4 sm:mb-5">
               <label className="block text-sm font-semibold mb-2 text-slate-700">
                 Kuota per Hari <span className="text-red-500">*</span>
               </label>
@@ -438,12 +495,12 @@ export default function AddCounter() {
                     }}
                     onBlur={() => handleFieldTouch("quota")}
                     placeholder="Contoh: 100"
-                    className={`w-full rounded-xl border transition-colors ${
+                    className={`w-full rounded-lg sm:rounded-xl border transition-colors ${
                       shouldShowError("quota")
                         ? "border-red-500 bg-red-50"
                         : "border-slate-300 hover:border-slate-400 focus:border-[#004A9F]"
                     } focus:ring-2 focus:ring-[#004A9F]/20`}
-                    inputClassName={`px-4 py-3 w-full ${
+                    inputClassName={`px-3 sm:px-4 py-2.5 sm:py-3 w-full text-sm sm:text-base ${
                       shouldShowError("quota") ? "text-red-600" : ""
                     }`}
                     min={1}
@@ -452,8 +509,8 @@ export default function AddCounter() {
                 )}
               />
               {shouldShowError("quota") && (
-                <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                  <i className="pi pi-exclamation-circle text-sm"></i>
+                <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                  <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                   {errors.quota.message}
                 </p>
               )}
@@ -463,15 +520,14 @@ export default function AddCounter() {
             </div>
 
             {/* Jadwal Mulai & Selesai */}
-            <div className="space-y-5">
+            <div className="space-y-4 sm:space-y-5">
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                   <label className="block text-sm font-semibold text-slate-700">
                     Jadwal Mulai <span className="text-red-500">*</span>
                   </label>
-                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
-                    Format:{" "}
-                    <span className="font-mono font-semibold">00:00:00</span>
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                    Format: <span className="font-mono font-semibold">00:00:00</span>
                   </span>
                 </div>
                 <Controller
@@ -489,35 +545,34 @@ export default function AddCounter() {
                       hourFormat="24"
                       showIcon
                       showSeconds
-                      icon="pi pi-clock px-3"
+                      icon="pi pi-clock"
                       placeholder="Pilih waktu mulai..."
-                      className={`w-full rounded-xl border transition-colors ${
+                      className={`w-full rounded-lg sm:rounded-xl border transition-colors ${
                         shouldShowError("schedule_start")
                           ? "border-red-500"
                           : "border-slate-300"
                       }`}
-                      inputClassName={`px-4 py-3 w-full rounded-xl ${
+                      inputClassName={`px-3 sm:px-4 py-2.5 sm:py-3 w-full rounded-lg sm:rounded-xl text-sm sm:text-base ${
                         shouldShowError("schedule_start") ? "text-red-600" : ""
                       }`}
                     />
                   )}
                 />
                 {shouldShowError("schedule_start") && (
-                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                    <i className="pi pi-exclamation-circle text-sm"></i>
+                  <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                    <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                     {errors.schedule_start.message}
                   </p>
                 )}
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                   <label className="block text-sm font-semibold text-slate-700">
                     Jadwal Selesai <span className="text-red-500">*</span>
                   </label>
-                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
-                    Format:{" "}
-                    <span className="font-mono font-semibold">00:00:00</span>
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                    Format: <span className="font-mono font-semibold">00:00:00</span>
                   </span>
                 </div>
                 <Controller
@@ -535,22 +590,22 @@ export default function AddCounter() {
                       hourFormat="24"
                       showIcon
                       showSeconds
-                      icon="pi pi-clock px-3"
+                      icon="pi pi-clock"
                       placeholder="Pilih waktu selesai..."
-                      className={`w-full rounded-xl border transition-colors ${
+                      className={`w-full rounded-lg sm:rounded-xl border transition-colors ${
                         shouldShowError("schedule_end")
                           ? "border-red-500"
                           : "border-slate-300"
                       }`}
-                      inputClassName={`px-4 py-3 w-full rounded-xl ${
+                      inputClassName={`px-3 sm:px-4 py-2.5 sm:py-3 w-full rounded-lg sm:rounded-xl text-sm sm:text-base ${
                         shouldShowError("schedule_end") ? "text-red-600" : ""
                       }`}
                     />
                   )}
                 />
                 {shouldShowError("schedule_end") && (
-                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                    <i className="pi pi-exclamation-circle text-sm"></i>
+                  <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center gap-1">
+                    <i className="pi pi-exclamation-circle text-xs sm:text-sm"></i>
                     {errors.schedule_end.message}
                   </p>
                 )}
@@ -559,23 +614,23 @@ export default function AddCounter() {
           </div>
 
           {/* BUTTON AREA */}
-          <div className="lg:col-span-2">
-            <div className="flex items-center justify-center gap-3">
+          <div className="xl:col-span-2">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4 border-t border-slate-200">
               <Button
                 type="button"
                 label="Batal"
-                icon="pi pi-times px-1"
+                icon="pi pi-times"
                 outlined
-                className="!px-8 !py-3 !rounded-xl border-red-500 text-white bg-red-500 hover:bg-red-700 hover:border-red-700 transition-all"
+                className="w-full sm:w-auto px-6 py-2.5 sm:py-3 rounded-lg sm:rounded-xl border-red-500 text-red-500 hover:bg-red-50 transition-all order-2 sm:order-1"
                 onClick={() => navigate("/admin/counters")}
               />
               <Button
                 type="submit"
-                label={isSaving || isSubmitting ? "Menyimpan..." : "Save"}
-                icon="pi pi-save px-1"
+                label={isSaving || isSubmitting ? "Menyimpan..." : "Simpan"}
+                icon="pi pi-save"
                 disabled={isSaving || isSubmitting}
-                className="!px-8 !py-3 !rounded-xl !text-white shadow-sm
-                           transition-all hover:shadow-md
+                className="w-full sm:w-auto px-6 py-2.5 sm:py-3 rounded-lg sm:rounded-xl text-white shadow-sm
+                           transition-all hover:shadow-md order-1 sm:order-2
                            bg-gradient-to-r from-[#0B63CE] to-[#003B80] hover:from-[#0a57b7] hover:to-[#00306a]
                            disabled:from-slate-400 disabled:to-slate-500 disabled:cursor-not-allowed"
               />
@@ -585,4 +640,4 @@ export default function AddCounter() {
       </div>
     </div>
   );
-}
+};
