@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useGetCountersQuery } from "../../features/counters/counterApi";
 import { useWebSocket } from "../../hooks/useWebSocket";
 
@@ -6,7 +6,7 @@ const DashboardAdmin = () => {
   const [counters, setCounters] = useState([]);
   const [queueStats, setQueueStats] = useState([]);
   const [activeQueues, setActiveQueues] = useState([]);
-  const [allQueues, setAllQueues] = useState([]); // Tambah state untuk semua antrian
+  const [allQueues, setAllQueues] = useState([]);
   const [wsConnected, setWsConnected] = useState(false);
 
   const { data: counterData, isLoading: loadingCounters } =
@@ -18,7 +18,59 @@ const DashboardAdmin = () => {
     setCounters(counterData);
   }, [counterData]);
 
-  // WebSocket handler - TAMPILKAN SEMUA ANTRIAN TANPA FILTER
+  // Fungsi untuk mengurutkan antrean sesuai aturan
+  const sortQueues = (queues) => {
+    if (!queues || queues.length === 0) return [];
+    
+    // Urutan prioritas status
+    const statusOrder = {
+      'waiting': 1,
+      'called': 2,
+      'served': 3,
+      'done': 4,
+      'canceled': 5
+    };
+    
+    // Fungsi untuk mengekstrak nomor antrian (angka terakhir dari queue_number)
+    const getQueueNumber = (queue) => {
+      if (!queue.queue_number) return 0;
+      const parts = queue.queue_number.split('-');
+      if (parts.length >= 4) {
+        const lastPart = parts[parts.length - 1];
+        return parseInt(lastPart, 10) || 0;
+      }
+      return 0;
+    };
+    
+    // Salin array untuk diurutkan
+    const sortedQueues = [...queues].sort((a, b) => {
+      // Urutkan berdasarkan status terlebih dahulu
+      const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+      if (statusDiff !== 0) {
+        return statusDiff;
+      }
+      
+      // Jika status sama, urutkan berdasarkan nomor antrian
+      const queueNumA = getQueueNumber(a);
+      const queueNumB = getQueueNumber(b);
+      
+      // Jika nomor antrian sama, urutkan berdasarkan waktu pembuatan
+      if (queueNumA === queueNumB) {
+        return new Date(a.created_at) - new Date(b.created_at);
+      }
+      
+      return queueNumA - queueNumB;
+    });
+    
+    return sortedQueues;
+  };
+
+  // Gunakan useMemo untuk mengurutkan allQueues
+  const sortedAllQueues = useMemo(() => {
+    return sortQueues(allQueues);
+  }, [allQueues]);
+
+  // WebSocket handler
   const handleQueueUpdate = useCallback(
     (payload) => {
       console.log("WebSocket event received:", payload);
@@ -47,7 +99,7 @@ const DashboardAdmin = () => {
         // Cari counter info
         const counterInfo = counters.find((c) => c.id === counterId);
 
-        // Update allQueues - tambah semua queue ke array (TANPA FILTER JAM OPERASIONAL)
+        // Update allQueues
         setAllQueues((prev) => {
           const newQueues = [...prev];
 
@@ -93,7 +145,7 @@ const DashboardAdmin = () => {
   // Gunakan WebSocket hook
   useWebSocket(handleQueueUpdate);
 
-  // Load initial data - TAMPILKAN SEMUA ANTRIAN
+  // Load initial data
   useEffect(() => {
     if (!counterData || counterData.length === 0) return;
 
@@ -145,7 +197,7 @@ const DashboardAdmin = () => {
           }
         });
 
-        // Load SEMUA guest queues (TANPA FILTER JAM OPERASIONAL)
+        // Load semua guest queues
         let allQueuesData = [];
         try {
           const guestRes = await fetch(
@@ -196,6 +248,9 @@ const DashboardAdmin = () => {
         });
 
         console.log("All processed queues for display:", processedQueues);
+        
+        // Set allQueues dengan data yang sudah diproses
+        // Sorting akan dilakukan oleh useMemo
         setAllQueues(processedQueues);
 
         // Filter untuk antrian aktif (waiting, called, served) untuk tampilan khusus
@@ -351,12 +406,12 @@ const DashboardAdmin = () => {
           </div>
         </div>
 
-        {/* Semua Antrean Section - TAMPILKAN SEMUA STATUS */}
+        {/* Semua Antrean Section - MENGGUNAKAN sortedAllQueues */}
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20">
           <p className="font-semibold text-gray-700 text-base sm:text-lg md:text-lg mb-3 sm:mb-4 flex gap-2 items-center">
             <i className="pi pi-list text-sm sm:text-base"></i>
             <span className="text-sm sm:text-base md:text-lg">
-              Antrean Saat Ini ({allQueues.length})
+              Antrean Saat Ini ({sortedAllQueues.length})
             </span>
           </p>
 
@@ -383,12 +438,9 @@ const DashboardAdmin = () => {
               </thead>
 
               <tbody>
-                {allQueues.length > 0 ? (
-                  allQueues
-                    .sort(
-                      (a, b) => new Date(a.created_at) - new Date(b.created_at)
-                    )
-                    .slice(0, 100)
+                {sortedAllQueues.length > 0 ? (
+                  sortedAllQueues
+                    .slice(0, 100) // Batasi hanya 100 data untuk performa
                     .map((queue) => {
                       // Tentukan waktu yang akan ditampilkan berdasarkan status
                       let displayTime = "-";
