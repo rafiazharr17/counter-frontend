@@ -1,5 +1,31 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
+// --- HELPER: Deteksi Role User (Fix untuk format Object) ---
+const getUserRole = () => {
+  try {
+    const userString = localStorage.getItem("user");
+    if (!userString) return null;
+
+    const user = JSON.parse(userString);
+
+    // Cek 1: Jika role adalah Object (Sesuai screenshot Anda)
+    // Contoh: user.role = { id: 2, name: "customer_service", ... }
+    if (user.role && typeof user.role === "object" && user.role.name) {
+      return user.role.name;
+    }
+
+    // Cek 2: Jika role adalah String langsung (Legacy/Format lain)
+    if (typeof user.role === "string") {
+      return user.role;
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Gagal memparsing user dari localStorage", error);
+    return null;
+  }
+};
+
 const baseQuery = fetchBaseQuery({
   baseUrl: import.meta.env.VITE_API_URL || "http://localhost:8000/api/",
   prepareHeaders: (headers) => {
@@ -49,12 +75,14 @@ export const counterApi = createApi({
   tagTypes: ["Counters", "TrashedCounters", "OperatingHours"],
 
   endpoints: (builder) => ({
+    
+    // 1. GET ALL COUNTERS
     getCounters: builder.query({
       async queryFn(_arg, _api, _extra, fetchWithBQ) {
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
+        const role = getUserRole(); // <-- Menggunakan Helper
 
-        // Admin & CS menggunakan endpoint yang sama
-        if (user.role === "admin" || user.role === "customer_service") {
+        // Admin & CS menggunakan endpoint authenticated
+        if (role === "admin" || role === "customer_service") {
           const res = await fetchWithBQ("counters");
           if (!res.error)
             return {
@@ -65,7 +93,7 @@ export const counterApi = createApi({
           return { error: res.error };
         }
 
-        // Guest
+        // Guest Fallback
         const resGuest = await fetchWithBQ("guest/counters");
         if (!resGuest.error) {
           const raw = resGuest.data;
@@ -82,91 +110,74 @@ export const counterApi = createApi({
       providesTags: ["Counters"],
     }),
 
+    // 2. GET SINGLE COUNTER
     getCounter: builder.query({
       async queryFn({ id }, _api, _extra, fetchWithBQ) {
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
-
-        // Pastikan ID adalah number
+        const role = getUserRole(); // <-- Menggunakan Helper
         const counterId = parseInt(id);
-        if (isNaN(counterId)) {
-          return { error: { message: "ID loket tidak valid" } };
+
+        // CS → gunakan endpoint authenticated
+        if (role === "customer_service") {
+          const res = await fetchWithBQ(`counters/${counterId}`);
+          if (!res.error) {
+            return { data: res.data?.data || res.data };
+          }
+          return { error: res.error };
         }
 
-        // Untuk CS, gunakan guest endpoint karena mungkin tidak ada akses ke endpoint admin
-        if (user.role === "customer_service") {
-          const guest = await fetchWithBQ(`guest/counters/${counterId}`);
-          if (!guest.error) return { data: guest.data?.data || guest.data };
-
-          // Jika guest endpoint error, coba endpoint biasa
-          const fallback = await fetchWithBQ(`counters/${counterId}`);
-          if (!fallback.error)
-            return { data: fallback.data?.data || fallback.data };
-
-          return { error: guest.error };
-        }
-
-        // Admin menggunakan endpoint admin
-        if (user.role === "admin") {
+        // Admin
+        if (role === "admin") {
           const admin = await fetchWithBQ(`counters/${counterId}`);
           if (!admin.error) return { data: admin.data?.data || admin.data };
         }
 
-        // Guest menggunakan endpoint guest
+        // Guest fallback
         const guest = await fetchWithBQ(`guest/counters/${counterId}`);
         if (!guest.error) return { data: guest.data?.data || guest.data };
 
         return { error: guest.error };
       },
-      providesTags: (result, error, { id }) => [{ type: "Counters", id }],
     }),
 
+    // 3. GET STATISTICS
     getCounterStatistics: builder.query({
       async queryFn({ id, date }, _api, _extra, fetchWithBQ) {
-        // Pastikan ID adalah number
         const counterId = parseInt(id);
         if (isNaN(counterId)) {
           return { error: { message: "ID loket tidak valid" } };
         }
 
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
+        const role = getUserRole(); // <-- Menggunakan Helper
         const qs = date ? `?date=${date}` : "";
 
-        // Coba endpoint admin terlebih dahulu untuk admin
-        if (user.role === "admin") {
-          const res = await fetchWithBQ(
-            `counters/${counterId}/statistics${qs}`
-          );
+        // Admin & CS → selalu pakai endpoint authenticated (statistik lengkap)
+        if (role === "admin" || role === "customer_service") {
+          const res = await fetchWithBQ(`counters/${counterId}/statistics${qs}`);
           if (!res.error) {
-            return { data: res.data.data };
+            return { data: res.data?.data || res.data };
           }
         }
 
-        // Untuk CS atau jika admin endpoint gagal, gunakan guest endpoint
-        // Kita akan hitung statistik secara manual dari data queues
-        const guestQueues = await fetchWithBQ(`guest/queues${qs}`);
-        if (!guestQueues.error) {
-          const queues = Array.isArray(guestQueues.data?.data)
-            ? guestQueues.data.data
-            : Array.isArray(guestQueues.data)
-            ? guestQueues.data
+        // Fallback Guest (Hitung manual dari queue list)
+        const guest = await fetchWithBQ(`guest/queues${qs}`);
+        if (!guest.error) {
+          const queues = Array.isArray(guest.data?.data)
+            ? guest.data.data
+            : Array.isArray(guest.data)
+            ? guest.data
             : [];
 
-          // Filter queues by counter_id dan hitung statistik
-          const filteredQueues = queues.filter(
-            (queue) => queue.counter_id == counterId
-          );
-          const stats = calculateManualStatistics(filteredQueues);
+          const filtered = queues.filter((q) => q.counter_id == counterId);
 
           return {
             data: {
               counter_id: counterId,
-              counter_name: "Counter", // Akan di-override nanti
-              ...stats,
+              ...calculateManualStatistics(filtered),
             },
           };
         }
 
-        return { error: guestQueues.error };
+        return { error: guest.error };
       },
     }),
 
@@ -183,11 +194,8 @@ export const counterApi = createApi({
     // 🔹 Untuk admin & CS
     updateCounter: builder.mutation({
       query: ({ id, ...data }) => {
-        // Pastikan ID adalah number
         const counterId = parseInt(id);
-        if (isNaN(counterId)) {
-          throw new Error("ID loket tidak valid");
-        }
+        if (isNaN(counterId)) throw new Error("ID loket tidak valid");
 
         return {
           url: `counters/${counterId}`,
@@ -204,11 +212,8 @@ export const counterApi = createApi({
     // 🔹 Hanya untuk admin
     deleteCounter: builder.mutation({
       query: (id) => {
-        // Pastikan ID adalah number
         const counterId = parseInt(id);
-        if (isNaN(counterId)) {
-          throw new Error("ID loket tidak valid");
-        }
+        if (isNaN(counterId)) throw new Error("ID loket tidak valid");
 
         return {
           url: `counters/${counterId}`,
@@ -218,39 +223,25 @@ export const counterApi = createApi({
       invalidatesTags: ["Counters"],
     }),
 
-    // Di endpoints getTrashedCounters, perbaiki menjadi:
+    // 🔹 Get Trashed
     getTrashedCounters: builder.query({
       query: () => "counters/trashed",
       transformResponse: (response) => {
-        console.log("Raw trashed response:", response); // Debug
-
         // Handle berbagai format response
-        if (Array.isArray(response)) {
-          return response;
-        } else if (response && Array.isArray(response.data)) {
-          return response.data;
-        } else if (
-          response &&
-          response.data &&
-          Array.isArray(response.data.data)
-        ) {
+        if (Array.isArray(response)) return response;
+        if (response && Array.isArray(response.data)) return response.data;
+        if (response && response.data && Array.isArray(response.data.data))
           return response.data.data;
-        }
-
         return [];
       },
       providesTags: ["TrashedCounters"],
     }),
 
-    // 🔹 Hanya untuk admin
+    // 🔹 Restore
     restoreCounter: builder.mutation({
       query: (id) => {
-        // Pastikan ID adalah number
         const counterId = parseInt(id);
-        if (isNaN(counterId)) {
-          throw new Error("ID loket tidak valid");
-        }
-
+        if (isNaN(counterId)) throw new Error("ID loket tidak valid");
         return {
           url: `counters/restore/${counterId}`,
           method: "POST",
@@ -259,15 +250,11 @@ export const counterApi = createApi({
       invalidatesTags: ["Counters", "TrashedCounters"],
     }),
 
-    // 🔹 Hanya untuk admin
+    // 🔹 Force Delete
     forceDeleteCounter: builder.mutation({
       query: (id) => {
-        // Pastikan ID adalah number
         const counterId = parseInt(id);
-        if (isNaN(counterId)) {
-          throw new Error("ID loket tidak valid");
-        }
-
+        if (isNaN(counterId)) throw new Error("ID loket tidak valid");
         return {
           url: `counters/force/${counterId}`,
           method: "DELETE",
@@ -276,55 +263,46 @@ export const counterApi = createApi({
       invalidatesTags: ["Counters", "TrashedCounters"],
     }),
 
-    // 🔹 Hanya untuk admin - Counter logs
+    // 🔹 Counter logs
     getCounterLogs: builder.query({
       async queryFn(counterId, _api, _extra, fetchWithBQ) {
-        // Pastikan ID adalah number
         const id = parseInt(counterId);
-        if (isNaN(id)) {
-          return { error: { message: "ID loket tidak valid" } };
-        }
+        if (isNaN(id)) return { error: { message: "ID loket tidak valid" } };
 
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
+        const role = getUserRole(); // <-- Menggunakan Helper
 
-        // Untuk admin, gunakan endpoint logs
-        if (user.role === "admin") {
+        // Admin & CS → gunakan endpoint authenticated
+        if (role === "admin" || role === "customer_service") {
           const res = await fetchWithBQ(`counters/${id}/logs`);
           if (!res.error) {
             return { data: res.data?.data || res.data || [] };
           }
         }
 
-        // Untuk CS atau jika admin endpoint gagal, gunakan guest queues
-        const guestQueues = await fetchWithBQ("guest/queues");
-        if (!guestQueues.error) {
-          const queues = Array.isArray(guestQueues.data?.data)
-            ? guestQueues.data.data
-            : Array.isArray(guestQueues.data)
-            ? guestQueues.data
+        // Fallback terakhir
+        const guest = await fetchWithBQ("guest/queues");
+        if (!guest.error) {
+          const queues = Array.isArray(guest.data?.data)
+            ? guest.data.data
+            : Array.isArray(guest.data)
+            ? guest.data
             : [];
-
-          // Filter queues by counter_id
-          const filteredQueues = queues.filter(
-            (queue) => queue.counter_id == id
-          );
-          return { data: filteredQueues };
+          return { data: queues.filter((q) => q.counter_id == id) };
         }
-
-        return { error: guestQueues.error };
+        return { error: guest.error };
       },
       providesTags: ["Counters"],
     }),
 
-    // 🔹 Ambil semua counter dengan jam operasional mereka (REAL DATA)
+    // 🔹 Get Counters with Operating Hours
     getCountersWithOperatingHours: builder.query({
       async queryFn(_arg, _api, _extra, fetchWithBQ) {
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
+        const role = getUserRole(); // <-- Menggunakan Helper
 
         try {
           // Ambil data counters
           let countersResult;
-          if (user.role === "admin" || user.role === "customer_service") {
+          if (role === "admin" || role === "customer_service") {
             countersResult = await fetchWithBQ("counters");
           } else {
             countersResult = await fetchWithBQ("guest/counters");
@@ -334,14 +312,14 @@ export const counterApi = createApi({
             return { error: countersResult.error };
           }
 
-          let counters = countersResult.data?.data || countersResult.data || [];
+          let counters =
+            countersResult.data?.data || countersResult.data || [];
           counters = Array.isArray(counters) ? counters : [];
 
           // Untuk setiap counter, ambil jam operasional REAL dari API
           const countersWithHours = await Promise.all(
             counters.map(async (counter) => {
               try {
-                // Ambil jam operasional khusus counter dari API
                 const hoursResult = await fetchWithBQ(
                   `counters/${counter.id}/operating-hours`
                 );
@@ -350,7 +328,6 @@ export const counterApi = createApi({
                   const operatingHours =
                     hoursResult.data.data || hoursResult.data;
 
-                  // Pastikan structure data konsisten
                   return {
                     ...counter,
                     operating_hours: {
@@ -364,23 +341,13 @@ export const counterApi = createApi({
                   };
                 }
 
-                // Jika tidak ada data jam operasional, counter TIDAK AKTIF
-                console.warn(
-                  `Counter ${counter.name} tidak memiliki pengaturan jam operasional`
-                );
-                return {
-                  ...counter,
-                  operating_hours: null, // Tandai sebagai tidak ada data
-                };
+                return { ...counter, operating_hours: null };
               } catch (error) {
                 console.error(
                   `Error getting operating hours for counter ${counter.id}:`,
                   error
                 );
-                return {
-                  ...counter,
-                  operating_hours: null, // Tandai sebagai error
-                };
+                return { ...counter, operating_hours: null };
               }
             })
           );
@@ -389,14 +356,16 @@ export const counterApi = createApi({
         } catch (error) {
           console.error("Error in getCountersWithOperatingHours:", error);
           return {
-            error: { message: "Failed to fetch counters with operating hours" },
+            error: {
+              message: "Failed to fetch counters with operating hours",
+            },
           };
         }
       },
       providesTags: ["Counters", "OperatingHours"],
     }),
 
-    // 🔹 Ambil jam operasional untuk counter tertentu
+    // 🔹 Get Operating Hours (Single)
     getCounterOperatingHours: builder.query({
       query: (counterId) => `counters/${counterId}/operating-hours`,
       providesTags: (result, error, counterId) => [
@@ -404,7 +373,7 @@ export const counterApi = createApi({
       ],
     }),
 
-    // 🔹 Update jam operasional counter
+    // 🔹 Update Operating Hours
     updateCounterOperatingHours: builder.mutation({
       query: ({ counterId, ...body }) => ({
         url: `counters/${counterId}/operating-hours`,
@@ -438,7 +407,6 @@ function calculateManualStatistics(queues) {
   const canceled = queues.filter((q) => q.status === "canceled").length;
   const done = queues.filter((q) => q.status === "done").length;
 
-  // Hitung rata-rata durasi (sederhana)
   let totalDuration = 0;
   let durationCount = 0;
 
