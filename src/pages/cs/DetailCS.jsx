@@ -69,8 +69,18 @@ export default function DetailCS() {
   // 2. INTEGRASI WEBSOCKET
   // Setiap kali ada event antrian (tambah/panggil/selesai), refresh data
   useWebSocket((eventData) => {
-    console.log("🔔 WebSocket Event di DetailCS:", eventData);
-    refetchQueues();
+    console.log("WebSocket Event di DetailCS:", eventData);
+
+    // Refresh data ketika ada event yang relevan
+    if (
+      eventData.event === "queue_called" ||
+      eventData.event === "queue_served" ||
+      eventData.event === "queue_done" ||
+      eventData.event === "queue_canceled" ||
+      eventData.event === "queue_created"
+    ) {
+      refetchQueues();
+    }
   });
 
   // Queue mutations dengan optimised refetch
@@ -274,9 +284,6 @@ export default function DetailCS() {
     return filteredQueues.find((queue) => queue.status === "served");
   }, [filteredQueues]);
 
-  // Get next queue to call
-  const nextQueue = waitingQueues[0];
-
   // Get called queue (yang sudah dipanggil tapi belum dilayani)
   const calledQueue = useMemo(() => {
     return filteredQueues.find(
@@ -287,6 +294,36 @@ export default function DetailCS() {
         queue.status !== "canceled"
     );
   }, [filteredQueues]);
+
+  // Get next queue to call - DIPERBAIKI
+  const nextQueue = useMemo(() => {
+    // Fungsi untuk mendapatkan nomor antrian sebagai angka
+    const getQueueNumber = (queueNum) => {
+      if (!queueNum) return 0;
+      const parts = queueNum.split("-");
+      return parseInt(parts[parts.length - 1]) || 0;
+    };
+
+    // Jika ada antrian yang sudah dipanggil (called)
+    if (calledQueue) {
+      const calledQueueNumber = getQueueNumber(calledQueue.queue_number);
+      
+      // Cari antrian waiting yang nomornya lebih besar dari yang sudah dipanggil
+      const nextWaiting = waitingQueues.find(queue => {
+        if (queue.status === 'waiting' && queue.id !== calledQueue.id) {
+          const queueNumber = getQueueNumber(queue.queue_number);
+          return queueNumber > calledQueueNumber;
+        }
+        return false;
+      });
+      
+      // Jika ditemukan, kembalikan antrian berikutnya
+      if (nextWaiting) return nextWaiting;
+    }
+    
+    // Jika tidak ada yang dipanggil atau tidak ada yang lebih besar, ambil antrian waiting pertama
+    return waitingQueues.find(q => q.status === 'waiting') || waitingQueues[0];
+  }, [waitingQueues, calledQueue]);
 
   // ==================== STATISTIK HARIAN ====================
 
@@ -495,15 +532,28 @@ export default function DetailCS() {
       setProcessingQueueId(queue.id);
       setIsCalling(true);
 
+      // Tampilkan loading state yang jelas
+      showPopup(
+        `Memanggil antrian ${formatQueueNumber(queue.queue_number)}...`
+      );
+
+      // Panggil API
       await callQueue(queue.id).unwrap();
+
+      // Mainkan audio
       await playCallAudio(queue.queue_number, data.name, data.counter_code);
 
-      // WS akan handle refresh, tapi timeout kecil tetap aman untuk UX
-      refreshTimeoutRef.current = setTimeout(() => {
+      // Refresh setelah delay kecil untuk memastikan update
+      setTimeout(() => {
         refetchQueues();
-      }, 500);
+      }, 300);
 
-      showPopup(`Memanggil antrian ${formatQueueNumber(queue.queue_number)}`);
+      // Tampilkan pesan sukses
+      setTimeout(() => {
+        showPopup(
+          `Antrian ${formatQueueNumber(queue.queue_number)} berhasil dipanggil!`
+        );
+      }, 500);
     } catch (error) {
       console.error("Error memanggil antrian:", error);
       showPopup(

@@ -338,7 +338,7 @@ const DashboardAdmin = () => {
             </p>
             <p className="text-gray-700 mt-1 text-sm sm:text-base">Loket Aktif</p>
           </div>
-          <i className="pi pi-desktop text-teal-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
+          <i className="pi pi-headphones text-teal-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
         {/* Card 2: Total Antrian Hari Ini (dari sortedAllQueues) */}
@@ -392,7 +392,7 @@ const DashboardAdmin = () => {
                       {item.name}
                     </p>
                     <span className="text-xs text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
-                      Kode: {getLoketNumber(item.counter_code)}
+                      Loket: {getLoketNumber(item.counter_code)}
                     </span>
                   </div>
                 </div>

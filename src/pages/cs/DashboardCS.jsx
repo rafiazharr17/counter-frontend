@@ -44,13 +44,13 @@ export default function DashboardCS() {
   // Fungsi untuk mendapatkan nama layanan dari counter name
   const getServiceName = (counterName) => {
     if (!counterName) return "Layanan";
-    
+
     // Ambil kata pertama sebagai nama layanan
-    const words = counterName.split(' ');
+    const words = counterName.split(" ");
     if (words.length > 0) {
       return words[0];
     }
-    
+
     return counterName;
   };
 
@@ -60,8 +60,8 @@ export default function DashboardCS() {
 
     // Buat map untuk grouping berdasarkan nama layanan
     const groups = {};
-    
-    counters.forEach(counter => {
+
+    counters.forEach((counter) => {
       const serviceName = getServiceName(counter.name);
       if (!groups[serviceName]) {
         groups[serviceName] = [];
@@ -71,14 +71,14 @@ export default function DashboardCS() {
 
     // Urutkan groups berdasarkan nama layanan
     const sortedGroups = Object.keys(groups)
-      .sort((a, b) => a.localeCompare(b, 'id')) // Urutkan berdasarkan abjad Indonesia
+      .sort((a, b) => a.localeCompare(b, "id")) // Urutkan berdasarkan abjad Indonesia
       .reduce((acc, key) => {
         acc[key] = groups[key];
         return acc;
       }, {});
 
     // Urutkan counters dalam setiap group berdasarkan nomor loket
-    Object.keys(sortedGroups).forEach(serviceName => {
+    Object.keys(sortedGroups).forEach((serviceName) => {
       sortedGroups[serviceName].sort((a, b) => {
         const numA = parseInt(getCounterNumber(a.counter_code)) || 0;
         const numB = parseInt(getCounterNumber(b.counter_code)) || 0;
@@ -92,7 +92,7 @@ export default function DashboardCS() {
   // Flat array untuk search dan stats (tetap urut)
   const sortedCounters = useMemo(() => {
     const result = [];
-    Object.keys(groupedCounters).forEach(serviceName => {
+    Object.keys(groupedCounters).forEach((serviceName) => {
       result.push(...groupedCounters[serviceName]);
     });
     return result;
@@ -101,7 +101,7 @@ export default function DashboardCS() {
   const filteredCounters = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return sortedCounters;
-    
+
     return sortedCounters.filter(
       (c) =>
         c.name?.toLowerCase().includes(q) ||
@@ -131,12 +131,8 @@ export default function DashboardCS() {
         <i className="pi pi-building text-white text-sm" />
       </div>
       <div>
-        <h3 className="font-bold text-slate-800 text-lg">
-          {serviceName}
-        </h3>
-        <p className="text-slate-500 text-sm">
-          {count} loket
-        </p>
+        <h3 className="font-bold text-slate-800 text-lg">{serviceName}</h3>
+        <p className="text-slate-500 text-sm">{count} loket</p>
       </div>
     </div>
   );
@@ -259,32 +255,10 @@ export default function DashboardCS() {
             <i className="pi pi-inbox text-slate-400 text-2xl sm:text-3xl" />
           </div>
           <p className="text-lg sm:text-xl font-semibold text-slate-600 mb-2">
-            {sortedCounters.length === 0 ? "Belum ada loket" : "Tidak ada hasil"}
-          </p>
-          <p className="text-slate-500 max-w-sm mx-auto text-sm sm:text-base">
             {sortedCounters.length === 0
-              ? "Mulai dengan menambahkan loket pertama untuk melayani pengunjung"
-              : "Coba ubah kata kunci pencarian atau filter yang berbeda"}
+              ? "Belum ada loket"
+              : "Tidak ada hasil"}
           </p>
-          {sortedCounters.length === 0 && (
-            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-              <Button
-                icon="pi pi-plus"
-                label="Tambah Loket Pertama"
-                className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white"
-                onClick={() => navigate("/admin/counters/new")}
-              />
-              {isAdmin && (
-                <Button
-                  icon="pi pi-history"
-                  label="Cek Loket Dihapus"
-                  outlined
-                  className="border-orange-500 text-orange-500 hover:bg-orange-50"
-                  onClick={() => navigate("/admin/counters/restore")}
-                />
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -295,9 +269,9 @@ export default function DashboardCS() {
           {search ? (
             <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
               {filteredCounters.map((counter) => (
-                <CounterCard 
-                  key={counter.id} 
-                  counter={counter} 
+                <CounterCard
+                  key={counter.id}
+                  counter={counter}
                   navigate={navigate}
                   getCounterNumber={getCounterNumber}
                 />
@@ -305,17 +279,17 @@ export default function DashboardCS() {
             </div>
           ) : (
             /* Jika tidak ada search, tampilkan grouped by service name */
-            Object.keys(groupedCounters).map(serviceName => (
+            Object.keys(groupedCounters).map((serviceName) => (
               <div key={serviceName}>
-                <GroupHeader 
-                  serviceName={serviceName} 
-                  count={groupedCounters[serviceName].length} 
+                <GroupHeader
+                  serviceName={serviceName}
+                  count={groupedCounters[serviceName].length}
                 />
                 <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
                   {groupedCounters[serviceName].map((counter) => (
-                    <CounterCard 
-                      key={counter.id} 
-                      counter={counter} 
+                    <CounterCard
+                      key={counter.id}
+                      counter={counter}
                       navigate={navigate}
                       getCounterNumber={getCounterNumber}
                     />
@@ -351,7 +325,6 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
     <div
       onClick={() => navigate(`/cs/counters/${counter.id}`)}
       className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex flex-col h-full cursor-pointer transition-all duration-300 hover:shadow-xl hover:border-slate-300 hover:scale-[1.02] group">
-      
       {/* Header */}
       <div className="flex items-start justify-between gap-2 sm:gap-3 mb-3 sm:mb-4">
         <div className="flex-1 min-w-0">
@@ -393,11 +366,10 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-700 truncate">
-                {formatTime(counter.schedule_start)} - {formatTime(counter.schedule_end)}
+                {formatTime(counter.schedule_start)} -{" "}
+                {formatTime(counter.schedule_end)}
               </p>
-              <p className="text-xs text-slate-500">
-                Jam operasional
-              </p>
+              <p className="text-xs text-slate-500">Jam operasional</p>
             </div>
           </div>
         ) : (
@@ -409,9 +381,7 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
               <p className="text-sm font-semibold text-amber-700 truncate">
                 Tidak ada jadwal
               </p>
-              <p className="text-xs text-amber-600">
-                Atur jadwal operasional
-              </p>
+              <p className="text-xs text-amber-600">Atur jadwal operasional</p>
             </div>
           </div>
         )}
@@ -423,14 +393,14 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
 // Helper function untuk format waktu
 const formatTime = (timeString) => {
   if (!timeString) return "-";
-  
+
   // Jika format sudah HH:MM:SS, ambil hanya HH:MM
-  if (timeString.includes(':')) {
-    const parts = timeString.split(':');
+  if (timeString.includes(":")) {
+    const parts = timeString.split(":");
     if (parts.length >= 2) {
       return `${parts[0]}:${parts[1]}`;
     }
   }
-  
+
   return timeString;
 };

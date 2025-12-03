@@ -30,26 +30,53 @@ export const useWebSocket = (callback) => {
     // Pastikan Echo sudah ada
     if (!window.Echo) return;
 
-    console.log("🔌 Menghubungkan ke channel 'queue-channel'...");
+    console.log("Menghubungkan ke channel 'queue-channel'...");
 
     // Subscribe ke channel
     const channel = window.Echo.channel("queue-channel");
 
-    // Listen ke event
+    // Listen ke event - debug lebih detail
     const eventHandler = (e) => {
-      console.log("WebSocket Event Diterima:", e);
+      console.log("WebSocket Event Diterima:", {
+        rawEvent: e,
+        type: typeof e,
+        keys: Object.keys(e || {}),
+        queueData: e?.queue,
+        hasQueue: !!e?.queue
+      });
+      
+      // Format event sesuai dengan kebutuhan DisplayScreen
+      const formattedEvent = {
+        // Ambil event dari data queue jika ada
+        event: e?.queue?.status ? `queue_${e.queue.status}` : 'queue_updated',
+        data: e?.queue || e,
+        raw: e // Simpan data raw untuk debugging
+      };
+      
+      console.log("Event yang diformat:", formattedEvent);
+      
       // Panggil callback terbaru yang tersimpan di ref
       if (savedCallback.current) {
-        savedCallback.current(e);
+        savedCallback.current(formattedEvent);
       }
     };
 
     channel.listen(".QueueUpdated", eventHandler);
 
+    // Tambahkan listener untuk event lainnya jika ada
+    channel.listen(".QueueCalled", eventHandler);
+    channel.listen(".QueueServed", eventHandler);
+    channel.listen(".QueueDone", eventHandler);
+    channel.listen(".QueueCreated", eventHandler);
+
     // Cleanup saat component di-unmount
     return () => {
-      console.log("Meninggalkan channel...");
+      console.log("🔌 Meninggalkan channel...");
       channel.stopListening(".QueueUpdated", eventHandler);
+      channel.stopListening(".QueueCalled", eventHandler);
+      channel.stopListening(".QueueServed", eventHandler);
+      channel.stopListening(".QueueDone", eventHandler);
+      channel.stopListening(".QueueCreated", eventHandler);
     };
   }, []); 
 };
