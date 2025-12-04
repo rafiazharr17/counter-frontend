@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Toast } from "primereact/toast";
 
 // API Hooks
 import { useGetCountersQuery } from "../../features/counters/counterApi";
@@ -433,7 +432,7 @@ export default function DisplayScreen() {
           ? "border-4 border-blue-400"
           : "border-2 border-blue-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-blue-400/50"
+          ? "shadow-lg shadow-blue-200/30"
           : "shadow-lg shadow-blue-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-blue-600 to-blue-700"
@@ -453,7 +452,7 @@ export default function DisplayScreen() {
           ? "border-4 border-green-400"
           : "border-2 border-green-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-green-400/50"
+          ? "shadow-lg shadow-green-200/30"
           : "shadow-lg shadow-green-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-green-600 to-green-700"
@@ -473,7 +472,7 @@ export default function DisplayScreen() {
           ? "border-4 border-purple-400"
           : "border-2 border-purple-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-purple-400/50"
+          ? "shadow-lg shadow-purple-200/30"
           : "shadow-lg shadow-purple-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-purple-600 to-purple-700"
@@ -493,7 +492,7 @@ export default function DisplayScreen() {
           ? "border-4 border-orange-400"
           : "border-2 border-orange-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-orange-400/50"
+          ? "shadow-lg shadow-orange-200/30"
           : "shadow-lg shadow-orange-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-orange-600 to-orange-700"
@@ -513,7 +512,7 @@ export default function DisplayScreen() {
           ? "border-4 border-teal-400"
           : "border-2 border-teal-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-teal-400/50"
+          ? "shadow-lg shadow-teal-200/30"
           : "shadow-lg shadow-teal-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-teal-600 to-teal-700"
@@ -533,7 +532,7 @@ export default function DisplayScreen() {
           ? "border-4 border-pink-400"
           : "border-2 border-pink-200/80",
         shadow: isNewlyCalled
-          ? "shadow-lg shadow-pink-400/50"
+          ? "shadow-lg shadow-pink-200/30"
           : "shadow-lg shadow-pink-200/30",
         iconBg: isNewlyCalled
           ? "bg-gradient-to-r from-pink-600 to-pink-700"
@@ -620,7 +619,7 @@ export default function DisplayScreen() {
               className={`font-black ${
                 style.numberColor
               } tracking-widest block ${cardSizeConfig.numberFont} ${
-                q.isNewlyCalled ? "animate-pulse" : ""
+                q.isNewlyCalled ? "pulse-number" : ""
               }`}>
               {q.number}
             </span>
@@ -633,7 +632,7 @@ export default function DisplayScreen() {
               </span>
             </div>
             {q.isNewlyCalled && (
-              <div className="text-xs text-blue-600 font-semibold animate-pulse">
+              <div className="text-xs text-blue-600 font-semibold pulse-text">
                 Silakan menuju loket
               </div>
             )}
@@ -656,7 +655,7 @@ export default function DisplayScreen() {
     );
   };
 
-  // Main card component dengan variasi
+  // Main card component dengan variasi dan animasi kedip
   const ServiceCard = ({ data }) => {
     const style = getCardStyle(
       data.styleVariation,
@@ -668,21 +667,16 @@ export default function DisplayScreen() {
       <div
         className={`bg-gradient-to-br ${style.gradient} ${
           style.border
-        } rounded-2xl ${cardSizeConfig.padding} ${
-          style.shadow
+        } rounded-2xl ${
+          cardSizeConfig.padding
         } flex flex-col h-full transition-all duration-300 ${
-          data.isNewlyCalled ? "animate-pulse" : ""
+          data.isNewlyCalled ? "pulse-card" : ""
         }`}>
         {headerTemplate(data)}
         {cardContent(data)}
       </div>
     );
   };
-
-  // Hitung jumlah antrian yang baru dipanggil
-  const newlyCalledCount = Object.keys(recentlyCalled).filter(
-    (id) => recentlyCalled[id]?.isHighlighted
-  ).length;
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-sky-50 to-white p-4 sm:p-6">
@@ -761,19 +755,153 @@ export default function DisplayScreen() {
         </div>
       )}
 
-      {/* Custom CSS untuk animasi */}
+      {/* Custom CSS untuk animasi kedip yang smooth dan indah */}
       <style>{`
-        @keyframes pulse-glow {
-          0%, 100% {
-            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        /* Animasi pulse untuk card */
+        .pulse-card {
+          animation: elegant-pulse 2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+          transform-origin: center;
+          will-change: transform, box-shadow;
+        }
+
+        /* Animasi untuk nomor antrian */
+        .pulse-number {
+          animation: number-glow 2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+          display: inline-block;
+        }
+
+        /* Animasi untuk teks */
+        .pulse-text {
+          animation: text-float 2s infinite ease-in-out;
+        }
+
+        /* Animasi utama yang sangat smooth */
+        @keyframes elegant-pulse {
+          0% {
+            transform: scale(1);
+            box-shadow: 
+              0 4px 6px -1px rgba(0, 0, 0, 0.1),
+              0 2px 4px -1px rgba(0, 0, 0, 0.06),
+              0 0 0 0 rgba(59, 130, 246, 0);
+            opacity: 1;
+          }
+          25% {
+            transform: scale(1.01);
+            box-shadow: 
+              0 10px 15px -3px rgba(0, 0, 0, 0.1),
+              0 4px 6px -2px rgba(0, 0, 0, 0.05),
+              0 0 20px 5px rgba(59, 130, 246, 0.2);
+            opacity: 1;
           }
           50% {
-            box-shadow: 0 0 40px rgba(59, 130, 246, 0.8);
+            transform: scale(1);
+            box-shadow: 
+              0 4px 6px -1px rgba(0, 0, 0, 0.1),
+              0 2px 4px -1px rgba(0, 0, 0, 0.06),
+              0 0 0 0 rgba(59, 130, 246, 0);
+            opacity: 1;
+          }
+          75% {
+            transform: scale(1.01);
+            box-shadow: 
+              0 10px 15px -3px rgba(0, 0, 0, 0.1),
+              0 4px 6px -2px rgba(0, 0, 0, 0.05),
+              0 0 20px 5px rgba(59, 130, 246, 0.2);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1);
+            box-shadow: 
+              0 4px 6px -1px rgba(0, 0, 0, 0.1),
+              0 2px 4px -1px rgba(0, 0, 0, 0.06),
+              0 0 0 0 rgba(59, 130, 246, 0);
+            opacity: 1;
           }
         }
-        
-        .animate-pulse-glow {
-          animation: pulse-glow 2s infinite;
+
+        /* Animasi glow untuk nomor antrian */
+        @keyframes number-glow {
+          0%, 100% {
+            transform: scale(1);
+            text-shadow: none;
+            filter: brightness(1);
+          }
+          25%, 75% {
+            transform: scale(1.03);
+            text-shadow: 
+              0 0 20px currentColor,
+              0 0 40px rgba(59, 130, 246, 0.3);
+            filter: brightness(1.1);
+          }
+          50% {
+            transform: scale(1);
+            text-shadow: none;
+            filter: brightness(1);
+          }
+        }
+
+        /* Animasi float untuk teks */
+        @keyframes text-float {
+          0%, 100% {
+            transform: translateY(0);
+            opacity: 0.8;
+          }
+          25%, 75% {
+            transform: translateY(-1px);
+            opacity: 1;
+          }
+          50% {
+            transform: translateY(0);
+            opacity: 0.8;
+          }
+        }
+
+        /* Efek gradien animasi untuk border */
+        .pulse-card {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .pulse-card::before {
+          content: '';
+          position: absolute;
+          top: -2px;
+          left: -2px;
+          right: -2px;
+          bottom: -2px;
+          background: linear-gradient(
+            45deg,
+            rgba(59, 130, 246, 0.1),
+            rgba(59, 130, 246, 0.3),
+            rgba(59, 130, 246, 0.1)
+          );
+          border-radius: 16px;
+          z-index: -1;
+          animation: border-flow 3s linear infinite;
+          opacity: 0;
+        }
+
+        @keyframes border-flow {
+          0% {
+            opacity: 0;
+            background-position: 0% 50%;
+          }
+          25% {
+            opacity: 0.8;
+            background-position: 100% 50%;
+          }
+          50% {
+            opacity: 0;
+            background-position: 200% 50%;
+          }
+          75% {
+            opacity: 0.8;
+            background-position: 300% 50%;
+          }
+          100% {
+            opacity: 0;
+            background-position: 400% 50%;
+          }
         }
       `}</style>
     </div>

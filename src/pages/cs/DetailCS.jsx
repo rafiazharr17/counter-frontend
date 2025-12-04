@@ -14,10 +14,9 @@ import {
   useCancelQueueMutation,
   useCallNextQueueMutation,
 } from "../../features/queues/queueApi";
-// 1. IMPORT HOOK WEBSOCKET
 import { useWebSocket } from "../../hooks/useWebSocket";
 
-// Helper functions dari DetailCounter.jsx
+// Helper functions
 function toYMD(dateObj) {
   const y = dateObj.getFullYear();
   const m = String(dateObj.getMonth() + 1).padStart(2, "0");
@@ -52,7 +51,6 @@ export default function DetailCS() {
   const ymd = useMemo(() => toYMD(selectedDate), [selectedDate]);
 
   // Queue API hooks
-  // PERUBAHAN: Polling dihapus karena sudah ada WebSocket
   const {
     data: queuesData = [],
     isLoading: queuesLoading,
@@ -61,36 +59,24 @@ export default function DetailCS() {
   } = useGetQueuesByCounterQuery(
     { counterId: id, date: ymd },
     {
-      // pollingInterval: 30000, // Dihapus/dikomentari agar fully realtime via WS
       refetchOnMountOrArgChange: true,
     }
   );
 
-  // 2. INTEGRASI WEBSOCKET
-  // Setiap kali ada event antrian (tambah/panggil/selesai), refresh data
+  // WebSocket
   useWebSocket((eventData) => {
-    console.log("WebSocket Event di DetailCS:", eventData);
-
-    // Refresh data ketika ada event yang relevan
-    if (
-      eventData.event === "queue_called" ||
-      eventData.event === "queue_served" ||
-      eventData.event === "queue_done" ||
-      eventData.event === "queue_canceled" ||
-      eventData.event === "queue_created"
-    ) {
-      refetchQueues();
-    }
+    console.log("🔔 WebSocket Event di DetailCS:", eventData);
+    refetchQueues();
   });
 
-  // Queue mutations dengan optimised refetch
+  // Queue mutations
   const [callQueue] = useCallQueueMutation();
   const [serveQueue] = useServeQueueMutation();
   const [doneQueue] = useDoneQueueMutation();
   const [cancelQueue] = useCancelQueueMutation();
   const [callNextQueue] = useCallNextQueueMutation();
 
-  // Loading states untuk masing-masing action
+  // Loading states
   const [isCalling, setIsCalling] = useState(false);
   const [isServing, setIsServing] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -114,8 +100,15 @@ export default function DetailCS() {
   // Ref untuk force refresh
   const refreshTimeoutRef = useRef(null);
 
-  // State untuk sorting riwayat terbaru
-  const [historySortOrder, setHistorySortOrder] = useState("desc"); // "asc" atau "desc"
+  const [historySortField, setHistorySortField] = useState("endTime");
+
+  const [historySortOrder, setHistorySortOrder] = useState("desc");
+
+  // State untuk menyimpan antrian yang TERAKHIR dipanggil
+  const [lastCalledQueue, setLastCalledQueue] = useState(null);
+
+  // State untuk menyimpan antrian yang SEDANG dipanggil (dari API)
+  const [currentlyCalledFromApi, setCurrentlyCalledFromApi] = useState(null);
 
   const showPopup = (msg) => {
     setPopupMessage(msg);
@@ -147,7 +140,7 @@ export default function DetailCS() {
     return () => clearInterval(timer);
   }, []);
 
-  // Load voices ketika component mount
+  // Load voices
   useEffect(() => {
     const loadVoices = () => {
       const availableVoices = window.speechSynthesis.getVoices();
@@ -213,13 +206,135 @@ export default function DetailCS() {
     return sortQueues(filtered);
   }, [queuesData, id]);
 
+  // Effect untuk mencari antrian yang SEDANG dipanggil (status: called) dan update lastCalledQueue
+  useEffect(() => {
+    if (!filteredQueues || filteredQueues.length === 0) {
+      setCurrentlyCalledFromApi(null);
+      return;
+    }
+
+    // Cari semua antrian dengan status 'called' yang memiliki called_at
+    const calledQueues = filteredQueues.filter(
+      (queue) => queue.status === "called" && queue.called_at
+    );
+
+    if (calledQueues.length > 0) {
+      // Urutkan berdasarkan waktu dipanggil (terbaru ke terlama)
+      const sortedCalledQueues = [...calledQueues].sort((a, b) => {
+        const timeA = new Date(a.called_at);
+        const timeB = new Date(b.called_at);
+        return timeB - timeA; // Terbaru di atas
+      });
+
+      // Ambil yang terbaru untuk ditampilkan
+      const newestCalledQueue = sortedCalledQueues[0];
+      setCurrentlyCalledFromApi(newestCalledQueue);
+
+      // Update lastCalledQueue dengan yang terbaru
+      if (!lastCalledQueue || lastCalledQueue.id !== newestCalledQueue.id) {
+        setLastCalledQueue(newestCalledQueue);
+      }
+    } else {
+      // Jika tidak ada yang status called, reset currentlyCalledFromApi
+      setCurrentlyCalledFromApi(null);
+
+      // Tapi pertahankan lastCalledQueue jika masih ada dalam filteredQueues
+      if (lastCalledQueue) {
+        const lastQueueStillExists = filteredQueues.some(
+          (q) => q.id === lastCalledQueue.id
+        );
+
+        if (!lastQueueStillExists) {
+          setLastCalledQueue(null);
+        }
+      }
+    }
+  }, [filteredQueues, lastCalledQueue]);
+
+  // Helper function untuk mendapatkan antrian yang SEDANG dipanggil (untuk tampilan)
+  const getCurrentlyCalledQueue = () => {
+    // Prioritaskan currentlyCalledFromApi (dari API terbaru)
+    if (currentlyCalledFromApi) {
+      return currentlyCalledFromApi;
+    }
+
+    // Fallback ke lastCalledQueue
+    return lastCalledQueue;
+  };
+
+  // PERUBAHAN: Get queue untuk tombol LAYANI (logika yang diperbaiki)
+  const getQueueForServe = () => {
+    // 1. Cari antrian dengan status 'called' yang TERBARU berdasarkan waktu dipanggil
+    const calledQueues = filteredQueues.filter(
+      (queue) => queue.status === "called" && queue.called_at
+    );
+
+    if (calledQueues.length > 0) {
+      // Urutkan berdasarkan waktu dipanggil (terbaru ke terlama)
+      const sortedCalledQueues = [...calledQueues].sort((a, b) => {
+        const timeA = new Date(a.called_at);
+        const timeB = new Date(b.called_at);
+        return timeB - timeA; // Terbaru di atas
+      });
+      return sortedCalledQueues[0]; // Ambil yang terbaru
+    }
+
+    // 2. Jika tidak ada yang 'called', ambil antrian yang terakhir dipanggil (lastCalledQueue)
+    if (lastCalledQueue) {
+      // Pastikan lastCalledQueue masih dalam filteredQueues dan statusnya bukan 'served' atau 'done'
+      const lastQueueInList = filteredQueues.find(
+        (q) => q.id === lastCalledQueue.id
+      );
+      if (
+        lastQueueInList &&
+        lastQueueInList.status !== "served" &&
+        lastQueueInList.status !== "done" &&
+        lastQueueInList.status !== "canceled"
+      ) {
+        return lastQueueInList;
+      }
+    }
+
+    // 3. Fallback: ambil antrian pertama yang waiting (untuk kasus edge)
+    const firstWaiting = filteredQueues.find(
+      (queue) => queue.status === "waiting"
+    );
+    return firstWaiting;
+  };
+
+  // PERUBAHAN: Get queue untuk tombol SELESAI
+  const getQueueForComplete = () => {
+    // Hanya bisa selesaikan antrian yang sedang dilayani (status: served)
+    return filteredQueues.find((queue) => queue.status === "served");
+  };
+
+  // PERUBAHAN: Get queue untuk tombol BATAL
+  const getQueueForCancel = () => {
+    // 1. Prioritaskan antrian yang sedang dilayani
+    const servingQueue = filteredQueues.find(
+      (queue) => queue.status === "served"
+    );
+    if (servingQueue) {
+      return servingQueue;
+    }
+
+    // 2. Cari antrian dengan status 'called'
+    const calledQueue = filteredQueues.find(
+      (queue) => queue.status === "called"
+    );
+    if (calledQueue) {
+      return calledQueue;
+    }
+
+    return null;
+  };
+
   // Process queues data untuk tabel riwayat
   const processedQueues = useMemo(() => {
     if (!filteredQueues || !Array.isArray(filteredQueues)) return [];
 
     return filteredQueues
       .filter((queue) => {
-        // Filter berdasarkan tanggal dari queue_number
         if (!queue.queue_number) return false;
 
         try {
@@ -247,7 +362,6 @@ export default function DetailCS() {
         }
       })
       .map((queue) => {
-        // Format data untuk tabel
         return {
           id: queue.id,
           queue_number: queue.queue_number,
@@ -261,7 +375,6 @@ export default function DetailCS() {
         };
       })
       .sort((a, b) => {
-        // Urutkan berdasarkan waktu created_at (terlama ke terbaru)
         const timeA = a.created_at ? new Date(a.created_at) : new Date(0);
         const timeB = b.created_at ? new Date(b.created_at) : new Date(0);
         return timeA - timeB;
@@ -276,58 +389,17 @@ export default function DetailCS() {
     return sortQueues(waiting);
   }, [filteredQueues]);
 
-  const activeQueues = useMemo(() => {
-    return filteredQueues.filter((queue) => queue.status === "served");
-  }, [filteredQueues]);
-
   const currentServingQueue = useMemo(() => {
     return filteredQueues.find((queue) => queue.status === "served");
   }, [filteredQueues]);
 
-  // Get called queue (yang sudah dipanggil tapi belum dilayani)
+  // PERUBAHAN: Get called queue (untuk logika tombol)
   const calledQueue = useMemo(() => {
-    return filteredQueues.find(
-      (queue) =>
-        queue.status === "called" &&
-        queue.status !== "served" &&
-        queue.status !== "done" &&
-        queue.status !== "canceled"
-    );
+    return filteredQueues.find((queue) => queue.status === "called");
   }, [filteredQueues]);
-
-  // Get next queue to call - DIPERBAIKI
-  const nextQueue = useMemo(() => {
-    // Fungsi untuk mendapatkan nomor antrian sebagai angka
-    const getQueueNumber = (queueNum) => {
-      if (!queueNum) return 0;
-      const parts = queueNum.split("-");
-      return parseInt(parts[parts.length - 1]) || 0;
-    };
-
-    // Jika ada antrian yang sudah dipanggil (called)
-    if (calledQueue) {
-      const calledQueueNumber = getQueueNumber(calledQueue.queue_number);
-      
-      // Cari antrian waiting yang nomornya lebih besar dari yang sudah dipanggil
-      const nextWaiting = waitingQueues.find(queue => {
-        if (queue.status === 'waiting' && queue.id !== calledQueue.id) {
-          const queueNumber = getQueueNumber(queue.queue_number);
-          return queueNumber > calledQueueNumber;
-        }
-        return false;
-      });
-      
-      // Jika ditemukan, kembalikan antrian berikutnya
-      if (nextWaiting) return nextWaiting;
-    }
-    
-    // Jika tidak ada yang dipanggil atau tidak ada yang lebih besar, ambil antrian waiting pertama
-    return waitingQueues.find(q => q.status === 'waiting') || waitingQueues[0];
-  }, [waitingQueues, calledQueue]);
 
   // ==================== STATISTIK HARIAN ====================
 
-  // Hitung statistik manual dari queues
   const displayStats = useMemo(() => {
     const total = processedQueues.length;
     const done = processedQueues.filter((q) => q.status === "done").length;
@@ -335,7 +407,6 @@ export default function DetailCS() {
       (q) => q.status === "canceled"
     ).length;
 
-    // Hitung rata-rata durasi sederhana
     let totalDuration = 0;
     let durationCount = 0;
 
@@ -343,7 +414,7 @@ export default function DetailCS() {
       if (queue.status === "done" && queue.called_at && queue.done_at) {
         const calledTime = new Date(queue.called_at);
         const doneTime = new Date(queue.done_at);
-        const duration = (doneTime - calledTime) / (1000 * 60); // dalam menit
+        const duration = (doneTime - calledTime) / (1000 * 60);
         totalDuration += duration;
         durationCount++;
       }
@@ -363,17 +434,16 @@ export default function DetailCS() {
 
   // ==================== LOGIKA TOMBOL YANG DIPERBAIKI ====================
 
-  // Tentukan state tombol berdasarkan kondisi antrian
+  // PERUBAHAN: Kembali ke logika tombol seperti sebelumnya
   const getButtonStates = () => {
     const hasWaitingQueue = waitingQueues.length > 0;
     const hasCalledQueue = !!calledQueue;
     const hasServingQueue = !!currentServingQueue;
-    const hasNextQueue = !!nextQueue;
 
     // 1. Skenario: ADA ANTRIAN BARU (menunggu)
     if (hasWaitingQueue && !hasCalledQueue && !hasServingQueue) {
       return {
-        call: true, // Tombol Panggil AKTIF
+        call: true, // Tombol Panggil/Panggil Ulang AKTIF
         serve: false, // Layani tidak aktif
         complete: false, // Selesai tidak aktif
         cancel: false, // Batal tidak aktif
@@ -387,7 +457,7 @@ export default function DetailCS() {
         call: true, // Tombol Panggil Ulang AKTIF
         serve: true, // Layani AKTIF
         complete: false, // Selesai tidak aktif
-        cancel: false, // Batal tidak aktif
+        cancel: true, // Batal AKTIF
         callNext: true, // Selanjutnya AKTIF
       };
     }
@@ -403,8 +473,8 @@ export default function DetailCS() {
       };
     }
 
-    // 4. Skenario: SETELAH SELESAI/BATAL
-    if (!hasCalledQueue && !hasServingQueue && hasNextQueue) {
+    // 4. Skenario: SETELAH SELESAI/BATAL (tidak ada yang called/served)
+    if (!hasCalledQueue && !hasServingQueue && hasWaitingQueue) {
       return {
         call: false, // Panggil tidak aktif
         serve: false, // Layani tidak aktif
@@ -426,14 +496,8 @@ export default function DetailCS() {
 
   const buttonStates = getButtonStates();
 
-  // ==================== FUNGSI UNTUK CARD TELAH DILAYANI ====================
+  // ==================== FUNGSI WAKTU ====================
 
-  // Antrian yang sedang dilayani
-  const currentlyServing = useMemo(() => {
-    return filteredQueues.filter((queue) => queue.status === "served");
-  }, [filteredQueues]);
-
-  // Hitung waktu berjalan untuk antrian yang sedang dilayani
   const calculateServiceDuration = (queue) => {
     if (!queue.served_at) return "00:00:00";
 
@@ -450,9 +514,6 @@ export default function DetailCS() {
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  // ==================== FUNGSI WAKTU REALTIME UNTUK ANTRIAN ====================
-
-  // Hitung waktu menunggu realtime dalam format HH:MM:SS
   const calculateRealtimeWaiting = (queue) => {
     if (!queue.created_at) return "00:00:00";
 
@@ -469,9 +530,6 @@ export default function DetailCS() {
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  // ==================== FUNGSI UNTUK RIWAYAT TERBARU ====================
-
-  // Hitung durasi total dari waiting ke selesai/batal
   const calculateTotalDuration = (queue) => {
     if (!queue.created_at) return "00:00:00";
 
@@ -496,35 +554,59 @@ export default function DetailCS() {
       .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  // Antrian yang sudah selesai atau batal untuk riwayat terbaru dengan sorting
   const completedOrCanceledQueues = useMemo(() => {
     return filteredQueues
       .filter((queue) => queue.status === "done" || queue.status === "canceled")
       .sort((a, b) => {
-        // Urutkan berdasarkan waktu terbaru (descending)
-        const getEndTime = (queue) => {
-          if (queue.status === "done" && queue.done_at)
-            return new Date(queue.done_at);
-          if (queue.status === "canceled" && queue.canceled_at)
-            return new Date(queue.canceled_at);
-          return new Date(0);
-        };
+        if (historySortField === "queueNumber") {
+          // Sorting berdasarkan nomor antrian
+          const getQueueNumber = (queueNum) => {
+            if (!queueNum) return 0;
+            const parts = queueNum.split("-");
+            return parseInt(parts[parts.length - 1]) || 0;
+          };
 
-        const timeA = getEndTime(a);
-        const timeB = getEndTime(b);
+          const numA = getQueueNumber(a.queue_number);
+          const numB = getQueueNumber(b.queue_number);
 
-        // Gunakan sorting order yang dipilih
-        if (historySortOrder === "desc") {
-          return timeB - timeA; // Terbaru ke terlama
+          if (historySortOrder === "asc") {
+            return numA - numB; // Nomor kecil ke besar
+          } else {
+            return numB - numA; // Nomor besar ke kecil
+          }
         } else {
-          return timeA - timeB; // Terlama ke terbaru
+          // Sorting berdasarkan waktu selesai/batal
+          const getEndTime = (queue) => {
+            if (queue.status === "done" && queue.done_at)
+              return new Date(queue.done_at);
+            if (queue.status === "canceled" && queue.canceled_at)
+              return new Date(queue.canceled_at);
+            return new Date(0); // Jika tidak ada waktu, gunakan tanggal default
+          };
+
+          const timeA = getEndTime(a);
+          const timeB = getEndTime(b);
+
+          if (historySortOrder === "asc") {
+            return timeA - timeB; // Lama ke baru
+          } else {
+            return timeB - timeA; // Baru ke lama
+          }
         }
       });
-  }, [filteredQueues, historySortOrder]);
+  }, [filteredQueues, historySortField, historySortOrder]);
+
+  const formatEndTime = (queue) => {
+    if (queue.status === "done" && queue.done_at) {
+      return new Date(queue.done_at).toLocaleTimeString("id-ID");
+    } else if (queue.status === "canceled" && queue.canceled_at) {
+      return new Date(queue.canceled_at).toLocaleTimeString("id-ID");
+    }
+    return "-";
+  };
 
   // ==================== FUNGSI UNTUK KLIK ANTRIAN ====================
 
-  // Fungsi untuk memanggil antrian yang diklik
   const handleCallQueue = async (queue) => {
     if (!queue) return;
 
@@ -532,28 +614,19 @@ export default function DetailCS() {
       setProcessingQueueId(queue.id);
       setIsCalling(true);
 
-      // Tampilkan loading state yang jelas
-      showPopup(
-        `Memanggil antrian ${formatQueueNumber(queue.queue_number)}...`
-      );
-
-      // Panggil API
       await callQueue(queue.id).unwrap();
+      // Update lastCalledQueue langsung
+      setLastCalledQueue(queue);
+      // Juga update currentlyCalledFromApi
+      setCurrentlyCalledFromApi(queue);
 
-      // Mainkan audio
       await playCallAudio(queue.queue_number, data.name, data.counter_code);
 
-      // Refresh setelah delay kecil untuk memastikan update
-      setTimeout(() => {
+      refreshTimeoutRef.current = setTimeout(() => {
         refetchQueues();
-      }, 300);
-
-      // Tampilkan pesan sukses
-      setTimeout(() => {
-        showPopup(
-          `Antrian ${formatQueueNumber(queue.queue_number)} berhasil dipanggil!`
-        );
       }, 500);
+
+      showPopup(`Memanggil antrian ${formatQueueNumber(queue.queue_number)}`);
     } catch (error) {
       console.error("Error memanggil antrian:", error);
       showPopup(
@@ -567,7 +640,6 @@ export default function DetailCS() {
     }
   };
 
-  // Fungsi untuk mencari voice Google Bahasa Indonesia perempuan
   const findFemaleIndonesianVoice = () => {
     if (!voices || voices.length === 0) return null;
 
@@ -593,14 +665,12 @@ export default function DetailCS() {
     return voices[0];
   };
 
-  // Fungsi untuk mendapatkan nomor loket dari counter_code
   const getCounterNumber = (counterCode) => {
     if (!counterCode) return "0";
     const parts = counterCode.split("-");
     return parts.length > 1 ? parts[1] : "0";
   };
 
-  // Fungsi untuk memutar audio panggilan dengan suara perempuan Indonesia
   const playCallAudio = async (queueNumber, counterName, counterCode) => {
     try {
       setIsPlayingAudio(true);
@@ -678,16 +748,17 @@ export default function DetailCS() {
 
   // ==================== FUNGSI UTAMA YANG DIPERBAIKI ====================
 
-  // Fungsi untuk tombol Panggil/Panggil Ulang
   const handleCallAction = async () => {
     let queueToCall;
 
+    // Logika sederhana: jika ada antrian yang sudah dipanggil (called), panggil ulang
+    // jika tidak, panggil antrian berikutnya
     if (calledQueue) {
       queueToCall = calledQueue;
     } else if (currentServingQueue) {
       queueToCall = currentServingQueue;
-    } else if (nextQueue) {
-      queueToCall = nextQueue;
+    } else if (waitingQueues.length > 0) {
+      queueToCall = waitingQueues[0];
     }
 
     if (!queueToCall) {
@@ -697,7 +768,13 @@ export default function DetailCS() {
 
     try {
       setIsCalling(true);
+
       await callQueue(queueToCall.id).unwrap();
+
+      // Pastikan lastCalledQueue dan currentlyCalledFromApi diupdate
+      setLastCalledQueue(queueToCall);
+      setCurrentlyCalledFromApi(queueToCall);
+
       await playCallAudio(
         queueToCall.queue_number,
         data.name,
@@ -723,30 +800,66 @@ export default function DetailCS() {
     }
   };
 
+  // PERUBAHAN: Fungsi Layani - logika yang diperbaiki
   const handleServeQueue = async () => {
-    const queueToServe = calledQueue || nextQueue;
+    const queueToServe = getQueueForServe();
 
     if (!queueToServe) {
       showPopup("Tidak ada antrian yang dapat dilayani");
       return;
     }
 
+    // Validasi tambahan: jika ada antrian yang sedang dilayani, jangan izinkan
+    if (currentServingQueue) {
+      showPopup(
+        `Sudah ada antrian yang sedang dilayani: #${formatQueueNumber(
+          currentServingQueue.queue_number
+        )}`
+      );
+      return;
+    }
+
     try {
       setIsServing(true);
 
+      // Jika antrian masih waiting, panggil dulu
       if (queueToServe.status === "waiting") {
         await callQueue(queueToServe.id).unwrap();
+        // Update states
+        setLastCalledQueue(queueToServe);
+        setCurrentlyCalledFromApi(queueToServe);
         await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Refetch untuk memastikan data terbaru
+        await refetchQueues();
+
+        // Cari ulang queue setelah dipanggil
+        const updatedQueue = filteredQueues.find(
+          (q) => q.id === queueToServe.id
+        );
+        if (updatedQueue && updatedQueue.status === "called") {
+          queueToServe.status = "called";
+        }
       }
 
-      await serveQueue(queueToServe.id).unwrap();
-      await refetchQueues();
+      // Pastikan status sudah 'called' sebelum dilayani
+      if (queueToServe.status === "called") {
+        // Layani antrian
+        await serveQueue(queueToServe.id).unwrap();
+        await refetchQueues();
 
-      showPopup(
-        `Memulai layanan untuk antrian ${formatQueueNumber(
-          queueToServe.queue_number
-        )}`
-      );
+        showPopup(
+          `Memulai layanan untuk antrian ${formatQueueNumber(
+            queueToServe.queue_number
+          )}`
+        );
+      } else {
+        showPopup(
+          `Antrian ${formatQueueNumber(
+            queueToServe.queue_number
+          )} belum dipanggil`
+        );
+      }
     } catch (error) {
       console.error("Error memulai layanan:", error);
       showPopup(
@@ -759,8 +872,9 @@ export default function DetailCS() {
     }
   };
 
+  // PERUBAHAN: Fungsi Selesai - akan menyelesaikan antrian yang sedang dilayani
   const handleDoneQueue = async () => {
-    const queueToComplete = currentServingQueue;
+    const queueToComplete = getQueueForComplete();
 
     if (!queueToComplete) {
       showPopup("Tidak ada antrian yang sedang dilayani");
@@ -791,8 +905,9 @@ export default function DetailCS() {
     }
   };
 
+  // PERUBAHAN: Fungsi Batal - akan membatalkan antrian yang sesuai
   const handleCancelQueue = async () => {
-    const queueToCancel = currentServingQueue || calledQueue;
+    const queueToCancel = getQueueForCancel();
 
     if (!queueToCancel) {
       showPopup("Tidak ada antrian yang dapat dibatalkan");
@@ -822,41 +937,103 @@ export default function DetailCS() {
     }
   };
 
+  // PERUBAHAN: Fungsi Call Next Queue - SEDERHANA: Selalu panggil antrian berikutnya dari waitingQueues
   const handleCallNextQueue = async () => {
     try {
       setIsCallingNext(true);
-      const result = await callNextQueue(id).unwrap();
-      const calledQueue = result.data || result;
 
-      if (calledQueue) {
-        await playCallAudio(
-          calledQueue.queue_number,
-          data.name,
-          data.counter_code
-        );
-        await refetchQueues();
-        showPopup(
-          `Memanggil antrian ${formatQueueNumber(calledQueue.queue_number)}`
-        );
-      } else {
-        showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+      // Cari antrian berikutnya berdasarkan urutan di waitingQueues
+      // waitingQueues sudah diurutkan berdasarkan nomor antrian (terkecil ke terbesar)
+
+      if (waitingQueues.length === 0) {
+        showPopup("Tidak ada antrian menunggu");
+        return;
       }
+
+      let nextQueueToCall = null;
+
+      // LOGIKA: Cari antrian berikutnya
+      // 1. Jika ada lastCalledQueue, cari antrian setelahnya di waitingQueues
+      if (lastCalledQueue) {
+        // Cari index lastCalledQueue di waitingQueues
+        const lastCalledIndex = waitingQueues.findIndex(
+          (queue) => queue.id === lastCalledQueue.id
+        );
+
+        if (
+          lastCalledIndex !== -1 &&
+          lastCalledIndex + 1 < waitingQueues.length
+        ) {
+          // Ambil antrian setelah lastCalledQueue
+          nextQueueToCall = waitingQueues[lastCalledIndex + 1];
+        } else {
+          // Jika lastCalledQueue tidak ditemukan atau sudah yang terakhir,
+          // ambil antrian pertama di waitingQueues
+          nextQueueToCall = waitingQueues[0];
+        }
+      } else {
+        // Jika tidak ada lastCalledQueue, ambil antrian pertama
+        nextQueueToCall = waitingQueues[0];
+      }
+
+      if (!nextQueueToCall) {
+        showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+        return;
+      }
+
+      // Panggil antrian tersebut
+      await callQueue(nextQueueToCall.id).unwrap();
+
+      // Update states
+      setLastCalledQueue(nextQueueToCall);
+      setCurrentlyCalledFromApi(nextQueueToCall);
+
+      await playCallAudio(
+        nextQueueToCall.queue_number,
+        data.name,
+        data.counter_code
+      );
+
+      await refetchQueues();
+
+      showPopup(
+        `Memanggil antrian berikutnya: ${formatQueueNumber(
+          nextQueueToCall.queue_number
+        )}`
+      );
     } catch (error) {
       console.error("Error memanggil antrian berikutnya:", error);
-      if (error.status === 404 || error.status === 400) {
-        if (nextQueue) {
-          await callQueue(nextQueue.id).unwrap();
+
+      // Fallback: coba panggil antrian waiting pertama
+      const firstWaiting = waitingQueues.find(
+        (queue) => queue.status === "waiting"
+      );
+
+      if (firstWaiting) {
+        try {
+          await callQueue(firstWaiting.id).unwrap();
+
+          setLastCalledQueue(firstWaiting);
+          setCurrentlyCalledFromApi(firstWaiting);
+
           await playCallAudio(
-            nextQueue.queue_number,
+            firstWaiting.queue_number,
             data.name,
             data.counter_code
           );
+
           await refetchQueues();
+
           showPopup(
-            `Memanggil antrian ${formatQueueNumber(nextQueue.queue_number)}`
+            `Memanggil antrian ${formatQueueNumber(firstWaiting.queue_number)}`
           );
-        } else {
-          showPopup("Tidak ada antrian berikutnya yang dapat dipanggil");
+        } catch (callError) {
+          console.error("Error fallback memanggil antrian:", callError);
+          showPopup(
+            `Gagal memanggil antrian berikutnya: ${
+              error.data?.message || error.message || "Terjadi kesalahan"
+            }`
+          );
         }
       } else {
         showPopup(
@@ -870,7 +1047,7 @@ export default function DetailCS() {
     }
   };
 
-  // Cleanup audio ketika component unmount
+  // Cleanup audio
   useEffect(() => {
     return () => {
       if (window.speechSynthesis) {
@@ -933,6 +1110,9 @@ export default function DetailCS() {
       </div>
     );
   }
+
+  // Dapatkan antrian yang sedang dipanggil untuk tampilan
+  const currentlyCalledForDisplay = getCurrentlyCalledQueue();
 
   return (
     <div className="space-y-6 p-4 sm:p-6 bg-gray-100 min-h-screen">
@@ -997,20 +1177,12 @@ export default function DetailCS() {
               </div>
             )}
 
-            {calledQueue && !currentServingQueue && (
+            {/* Tampilkan antrian TERAKHIR dipanggil */}
+            {lastCalledQueue && (
               <div className="p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
                 <p className="text-yellow-700 text-sm font-semibold">
-                  Telah Dipanggil: #
-                  {formatQueueNumber(calledQueue.queue_number)}
-                </p>
-              </div>
-            )}
-
-            {isAnyActionLoading && (
-              <div className="p-3 bg-orange-100 border border-orange-300 rounded-lg animate-pulse">
-                <p className="text-orange-700 text-sm font-semibold flex items-center gap-2">
-                  <i className="pi pi-spin pi-spinner"></i>
-                  Memproses...
+                  Terakhir Dipanggil: #
+                  {formatQueueNumber(lastCalledQueue.queue_number)}
                 </p>
               </div>
             )}
@@ -1027,34 +1199,44 @@ export default function DetailCS() {
 
       {/* ================= GRID 2 KOLOM ================= */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* STATUS ANTRIAN SECTION - DENGAN KLIK UNTUK MEMANGGIL */}
+        {/* SECTION ANTRIAN SEDANG DIPANGGIL - MENGGUNAKAN currentlyCalledForDisplay */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
             <i className="pi pi-forward text-blue-500"></i>
-            Akan Dipanggil
+            Antrian Sedang Dipanggil
           </h3>
-          {nextQueue ? (
-            <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
+
+          {/* Tampilkan currentlyCalledForDisplay */}
+          {currentlyCalledForDisplay ? (
+            <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200 mb-4">
               <div className="text-3xl font-bold text-blue-600 mb-2">
-                #{formatQueueNumber(nextQueue.queue_number)}
+                #{formatQueueNumber(currentlyCalledForDisplay.queue_number)}
               </div>
-              <p className="text-blue-700 text-sm">Antrian berikutnya</p>
-              <p className="text-blue-500 text-xs mt-1">
-                Status:{" "}
-                {nextQueue.status === "called" ? "Telah Dipanggil" : "Menunggu"}
+              <p className="text-blue-700 text-sm">
+                {currentlyCalledForDisplay.status === "called"
+                  ? "Sedang dipanggil"
+                  : "Terakhir dipanggil"}
               </p>
               <p className="text-blue-500 text-xs mt-1">
-                Waktu Menunggu: {calculateRealtimeWaiting(nextQueue)}
+                {currentlyCalledForDisplay.status === "called"
+                  ? "Waktu Dipanggil: "
+                  : "Terakhir dipanggil: "}
+                {currentlyCalledForDisplay.called_at
+                  ? new Date(
+                      currentlyCalledForDisplay.called_at
+                    ).toLocaleTimeString("id-ID")
+                  : "Baru saja"}
               </p>
             </div>
           ) : (
-            <div className="text-center p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="text-center p-4 bg-slate-50 rounded-lg border border-slate-200 mb-4">
               <i className="pi pi-inbox text-slate-400 text-2xl mb-2"></i>
               <p className="text-slate-500 text-sm">
-                Tidak ada antrian menunggu
+                Belum ada antrian dipanggil
               </p>
             </div>
           )}
+
           <div className="mt-4">
             <p className="text-sm text-slate-600 mb-2">
               Total Menunggu:{" "}
@@ -1116,23 +1298,23 @@ export default function DetailCS() {
             <h4 className="text-md font-semibold text-green-800 mb-2">
               Sedang Dilayani
             </h4>
-            {currentlyServing.length > 0 ? (
-              currentlyServing.map((queue) => (
-                <div key={queue.id} className="space-y-2">
-                  <div className="text-2xl font-bold text-green-600">
-                    #{formatQueueNumber(queue.queue_number)}
-                  </div>
-                  <div className="text-green-700 text-sm font-mono font-semibold">
-                    {calculateServiceDuration(queue)}
-                  </div>
-                  <div className="text-green-600 text-xs">
-                    Mulai:{" "}
-                    {queue.served_at
-                      ? new Date(queue.served_at).toLocaleTimeString("id-ID")
-                      : "-"}
-                  </div>
+            {currentServingQueue ? (
+              <div className="space-y-2">
+                <div className="text-2xl font-bold text-green-600">
+                  #{formatQueueNumber(currentServingQueue.queue_number)}
                 </div>
-              ))
+                <div className="text-green-700 text-sm font-mono font-semibold">
+                  {calculateServiceDuration(currentServingQueue)}
+                </div>
+                <div className="text-green-600 text-xs">
+                  Mulai:{" "}
+                  {currentServingQueue.served_at
+                    ? new Date(
+                        currentServingQueue.served_at
+                      ).toLocaleTimeString("id-ID")
+                    : "-"}
+                </div>
+              </div>
             ) : (
               <div className="text-green-500">
                 <i className="pi pi-clock text-2xl mb-2"></i>
@@ -1155,15 +1337,41 @@ export default function DetailCS() {
                 <span className="text-xs text-slate-500 hidden sm:block">
                   Urutkan:
                 </span>
-                <select
-                  value={historySortOrder}
-                  onChange={(e) => setHistorySortOrder(e.target.value)}
-                  className="text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[140px]">
-                  <option value="desc">Terbaru → Terlama</option>
-                  <option value="asc">Terlama → Terbaru</option>
-                </select>
+                <div className="flex gap-2">
+                  {/* Dropdown untuk memilih field sorting */}
+                  <select
+                    value={historySortField}
+                    onChange={(e) => {
+                      setHistorySortField(e.target.value);
+                      // Reset order ke desc ketika mengganti field
+                      setHistorySortOrder("desc");
+                    }}
+                    className="text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[140px]">
+                    <option value="endTime">Waktu Selesai/Batal</option>
+                    <option value="queueNumber">Nomor Antrian</option>
+                  </select>
+
+                  {/* Dropdown untuk memilih order sorting */}
+                  <select
+                    value={historySortOrder}
+                    onChange={(e) => setHistorySortOrder(e.target.value)}
+                    className="text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[100px]">
+                    {historySortField === "endTime" ? (
+                      <>
+                        <option value="desc">Terbaru → Terlama</option>
+                        <option value="asc">Terlama → Terbaru</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="desc">Besar → Kecil</option>
+                        <option value="asc">Kecil → Besar</option>
+                      </>
+                    )}
+                  </select>
+                </div>
               </div>
             </div>
+
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {completedOrCanceledQueues.length > 0 ? (
                 completedOrCanceledQueues.slice(0, 10).map((queue) => (
@@ -1197,13 +1405,7 @@ export default function DetailCS() {
                         {calculateTotalDuration(queue)}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {queue.status === "done" && queue.done_at
-                          ? new Date(queue.done_at).toLocaleTimeString("id-ID")
-                          : queue.canceled_at
-                          ? new Date(queue.canceled_at).toLocaleTimeString(
-                              "id-ID"
-                            )
-                          : ""}
+                        {formatEndTime(queue)}
                       </div>
                     </div>
                   </div>
@@ -1232,10 +1434,12 @@ export default function DetailCS() {
           Aksi Counter
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {/* Tombol Panggil/Panggil Ulang */}
+          {/* PERUBAHAN: Tombol Panggil/Panggil Ulang - sesuai dengan logika state */}
           <Button
             label={
-              buttonStates.call
+              isCalling
+                ? "Memanggil..."
+                : buttonStates.call
                 ? calledQueue || currentServingQueue
                   ? "Panggil Ulang"
                   : "Panggil"
@@ -1250,7 +1454,7 @@ export default function DetailCS() {
             disabled={!buttonStates.call || isAnyActionLoading}
           />
 
-          {/* Tombol Layani */}
+          {/* PERUBAHAN: Tombol Layani - sesuai dengan logika state */}
           <Button
             label={isServing ? "Melayani..." : "Layani"}
             className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
@@ -1262,7 +1466,7 @@ export default function DetailCS() {
             disabled={!buttonStates.serve || isAnyActionLoading}
           />
 
-          {/* Tombol Selesai */}
+          {/* PERUBAHAN: Tombol Selesai - sesuai dengan logika state */}
           <Button
             label={isCompleting ? "Menyelesaikan..." : "Selesai"}
             className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
@@ -1274,7 +1478,7 @@ export default function DetailCS() {
             disabled={!buttonStates.complete || isAnyActionLoading}
           />
 
-          {/* Tombol Batal */}
+          {/* PERUBAHAN: Tombol Batal - sesuai dengan logika state */}
           <Button
             label={isCancelling ? "Membatalkan..." : "Batal"}
             className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
@@ -1286,7 +1490,7 @@ export default function DetailCS() {
             disabled={!buttonStates.cancel || isAnyActionLoading}
           />
 
-          {/* Tombol Selanjutnya */}
+          {/* PERUBAHAN: Tombol Selanjutnya - sesuai dengan logika state */}
           <Button
             label={isCallingNext ? "Memanggil..." : "Selanjutnya"}
             className={`h-16 w-full rounded-xl font-bold text-lg transition-all duration-300 ${
