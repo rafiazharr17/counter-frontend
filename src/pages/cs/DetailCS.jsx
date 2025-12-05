@@ -1363,8 +1363,8 @@ export default function DetailCS() {
                       </>
                     ) : (
                       <>
-                        <option value="desc">Besar → Kecil</option>
-                        <option value="asc">Kecil → Besar</option>
+                        <option value="desc">Akhir → Awal</option>
+                        <option value="asc">Awal → Akhir</option>
                       </>
                     )}
                   </select>
