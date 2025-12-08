@@ -14,7 +14,7 @@ const baseQuery = fetchBaseQuery({
 export const userManagementApi = createApi({
   reducerPath: 'userManagementApi',
   baseQuery,
-  tagTypes: ['User', 'Role'],
+  tagTypes: ['User', 'Role', 'Counter'],
   endpoints: (builder) => ({
     // Get users with pagination and filters
     getUsers: builder.query({
@@ -32,19 +32,19 @@ export const userManagementApi = createApi({
       transformResponse: (response) => {
         // Transform response to match expected structure
         return {
-          data: response.data || [],
+          data: response.data || response || [],
           meta: {
-            total: response.total || 0,
-            current_page: response.current_page || 1,
-            last_page: response.last_page || 1,
-            per_page: response.per_page || 20,
-            from: response.from || 1,
-            to: response.to || 0,
+            total: response.total || response.meta?.total || 0,
+            current_page: response.current_page || response.meta?.current_page || 1,
+            last_page: response.last_page || response.meta?.last_page || 1,
+            per_page: response.per_page || response.meta?.per_page || 20,
+            from: response.from || response.meta?.from || 1,
+            to: response.to || response.meta?.to || 0,
           }
         };
       },
       providesTags: (result) =>
-        result
+        result?.data
           ? [
               ...result.data.map(({ id }) => ({ type: 'User', id })),
               { type: 'User', id: 'LIST' },
@@ -56,7 +56,6 @@ export const userManagementApi = createApi({
     getArchivedUsers: builder.query({
       query: () => 'users/trashed',
       transformResponse: (response) => {
-        // API trashed mengembalikan format yang berbeda
         return {
           data: response.data || response || [],
         };
@@ -67,6 +66,11 @@ export const userManagementApi = createApi({
     // Get single user
     getUser: builder.query({
       query: (id) => `users/${id}`,
+      transformResponse: (response) => {
+        return {
+          data: response.data || response,
+        };
+      },
       providesTags: (result, error, id) => [{ type: 'User', id }],
     }),
 
@@ -80,7 +84,7 @@ export const userManagementApi = createApi({
       invalidatesTags: [{ type: 'User', id: 'LIST' }],
     }),
 
-    // Update user - TAMBAHKAN ENDPOINT INI
+    // Update user
     updateUser: builder.mutation({
       query: ({ id, ...userData }) => ({
         url: `users/${id}`,
@@ -119,6 +123,18 @@ export const userManagementApi = createApi({
       ],
     }),
 
+    // Unassign counter from user
+    unassignCounterFromUser: builder.mutation({
+      query: (id) => ({
+        url: `users/${id}/unassign-counter`,
+        method: 'POST',
+      }),
+      invalidatesTags: (result, error, id) => [
+        { type: 'User', id },
+        { type: 'User', id: 'LIST' },
+      ],
+    }),
+
     // Archive user (soft delete)
     archiveUser: builder.mutation({
       query: (id) => ({
@@ -150,7 +166,6 @@ export const userManagementApi = createApi({
     getRoles: builder.query({
       query: () => 'roles',
       transformResponse: (response) => {
-        // Transform roles response
         return {
           data: response.data || response || [],
         };
@@ -158,11 +173,21 @@ export const userManagementApi = createApi({
       providesTags: ['Role'],
     }),
 
-    // Get all counters (untuk assign ke user)
+    // Get all counters
     getCounters: builder.query({
       query: () => 'counters',
       transformResponse: (response) => {
-        // Transform counters response
+        return {
+          data: response.data || response || [],
+        };
+      },
+      providesTags: ['Counter'],
+    }),
+
+    // Get available counters (not assigned)
+    getAvailableCounters: builder.query({
+      query: () => 'counters?available=true',
+      transformResponse: (response) => {
         return {
           data: response.data || response || [],
         };
@@ -177,12 +202,14 @@ export const {
   useGetArchivedUsersQuery,
   useGetUserQuery,
   useCreateUserMutation,
-  useUpdateUserMutation, // TAMBAHKAN INI
+  useUpdateUserMutation,
   useUpdateUserRoleMutation,
   useAssignCounterToUserMutation,
+  useUnassignCounterFromUserMutation,
   useArchiveUserMutation,
   useRestoreUserMutation,
   useForceDeleteUserMutation,
   useGetRolesQuery,
   useGetCountersQuery,
+  useGetAvailableCountersQuery,
 } = userManagementApi;

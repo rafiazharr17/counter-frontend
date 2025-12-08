@@ -9,9 +9,11 @@ import DashboardAdmin from "./pages/admin/DashboardAdmin";
 import RestoreCounter from "./pages/admin/counters/RestoreCounter";
 
 import UserManagement from "./pages/admin/user_management/HomeUserManagement";
+import AddUser from "./pages/admin/user_management/AddUser";
 import RestoreUser from "./pages/admin/user_management/RestoreUser";
 import DetailUser from "./pages/admin/user_management/DetailUser";
 import EditUser from "./pages/admin/user_management/EditUser";
+import LoketUser from "./pages/admin/user_management/LoketUser";
 
 
 import Login from "./pages/Login";
@@ -54,9 +56,11 @@ export default function App() {
         <Route path="counters/restore" element={<RestoreCounter />} />
 
         <Route path="users" element={<UserManagement />} />
+        <Route path="users/add" element={<AddUser />} />
         <Route path="users/restore" element={<RestoreUser />} />
         <Route path="users/:id" element={<DetailUser />} />
         <Route path="users/:id/edit" element={<EditUser />} />
+        <Route path="users/loket-management" element={<LoketUser />} />
         
         <Route path="roles" element={<RolesHome />} />
       </Route>

@@ -42,8 +42,46 @@ const AddUser = () => {
     },
   });
 
-  // Data
-  const rolesData = rolesResponse?.data || rolesResponse || [];
+  // Process roles data properly
+  const getRolesData = () => {
+    if (!rolesResponse) return [];
+    
+    // Debug log
+    console.log('Roles API Response:', rolesResponse);
+    
+    // Try different response formats
+    let data = [];
+    
+    if (Array.isArray(rolesResponse)) {
+      data = rolesResponse;
+    } else if (rolesResponse.data && Array.isArray(rolesResponse.data)) {
+      data = rolesResponse.data;
+    } else if (rolesResponse && typeof rolesResponse === 'object') {
+      // Jika response adalah object tunggal
+      data = [rolesResponse];
+    }
+    
+    console.log('Extracted roles data:', data);
+    
+    // Transform data to proper format for Dropdown
+    const formattedData = data.map((role) => {
+      // Ensure role has proper structure
+      const roleName = role.name || role.role_name || 'Unknown';
+      const roleId = role.id || role.role_id || '';
+      
+      return {
+        label: roleName.charAt(0).toUpperCase() + roleName.slice(1).replace('_', ' '),
+        value: roleId.toString(),
+        originalName: roleName
+      };
+    });
+    
+    console.log('Formatted roles data:', formattedData);
+    return formattedData;
+  };
+
+  const rolesData = getRolesData();
+  const selectedRoleValue = watch('role_id');
 
   // Handler
   const handleCreateUser = async (data) => {
@@ -54,7 +92,11 @@ const AddUser = () => {
         role_id: parseInt(data.role_id, 10),
       };
       
-      await createUser(formattedData).unwrap();
+      console.log('Creating user with data:', formattedData);
+      
+      const result = await createUser(formattedData).unwrap();
+      
+      console.log('Create user success:', result);
       
       toast.current.show({
         severity: 'success',
@@ -72,7 +114,7 @@ const AddUser = () => {
       toast.current.show({
         severity: 'error',
         summary: 'Gagal',
-        detail: error.data?.message || 'Gagal membuat user',
+        detail: error.data?.message || error.data?.errors?.[0] || 'Gagal membuat user',
         life: 3000,
       });
     } finally {
@@ -86,8 +128,13 @@ const AddUser = () => {
 
   if (isLoadingRoles) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <ProgressSpinner />
+      <div className="space-y-6 p-3 sm:p-4">
+        <div className="flex justify-center items-center h-64">
+          <div className="text-center">
+            <ProgressSpinner />
+            <p className="text-slate-500 mt-4">Memuat data roles...</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -193,8 +240,7 @@ const AddUser = () => {
                 <Password
                   {...register('password')}
                   className={`w-full rounded-xl border ${errors.password ? 'border-red-300' : 'border-slate-300'}`}
-                  placeholder="Minimal 6 karakter"
-                  toggleMask
+                  placeholder="Minimal 8 karakter"
                   feedback={true}
                   disabled={isSubmitting}
                   inputClassName="w-full pl-10"
@@ -208,33 +254,41 @@ const AddUser = () => {
                 )}
               </div>
 
-              {/* Role Field */}
+              {/* Role Field - SIMPLIFIED VERSION */}
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-slate-700 flex items-center gap-2">
                   <i className="pi pi-shield text-slate-400" />
                   Role *
                 </label>
                 <Dropdown
-                  options={rolesData.map((role) => ({
-                    label: (
-                      <div className="flex items-center gap-2">
-                        <i className={`pi pi-${role.name === 'admin' ? 'star-fill' : 'user'} text-slate-400`} />
-                        <span>{role.name.charAt(0).toUpperCase() + role.name.slice(1).replace('_', ' ')}</span>
-                      </div>
-                    ),
-                    value: role.id.toString(),
-                  }))}
-                  placeholder="Pilih role"
-                  className="w-full rounded-xl border-slate-300"
-                  value={watch('role_id')}
-                  onChange={(e) => setValue('role_id', e.value)}
-                  disabled={isSubmitting}
+                  options={rolesData}
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder={rolesData.length === 0 ? "Tidak ada role tersedia" : "Pilih role"}
+                  className={`w-full rounded-xl border ${errors.role_id ? 'border-red-300' : 'border-slate-300'}`}
+                  value={selectedRoleValue}
+                  onChange={(e) => {
+                    console.log('Role selected:', e.value);
+                    setValue('role_id', e.value, { shouldValidate: true });
+                  }}
+                  disabled={isSubmitting || rolesData.length === 0}
                   panelClassName="rounded-xl shadow-lg"
                 />
                 {errors.role_id && (
                   <div className="flex items-center gap-2 text-red-600 text-sm mt-1">
                     <i className="pi pi-exclamation-circle text-sm" />
                     <span>{errors.role_id.message}</span>
+                  </div>
+                )}
+                {rolesData.length === 0 && !isLoadingRoles && (
+                  <div className="flex items-center gap-2 text-amber-600 text-sm mt-1">
+                    <i className="pi pi-exclamation-circle text-sm" />
+                    <span>Tidak ada role tersedia. Hubungi administrator.</span>
+                  </div>
+                )}
+                {selectedRoleValue && (
+                  <div className="text-sm text-slate-500 mt-1">
+                    Selected: {rolesData.find(r => r.value === selectedRoleValue)?.label}
                   </div>
                 )}
               </div>
@@ -256,7 +310,7 @@ const AddUser = () => {
                   className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 
                            text-white px-5 py-2 rounded-lg gap-2 shadow-md hover:shadow-lg transition-all duration-200"
                   loading={isSubmitting}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || rolesData.length === 0 || !selectedRoleValue}
                 />
               </div>
             </form>
@@ -270,31 +324,46 @@ const AddUser = () => {
             <div className="p-5 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
                 <i className="pi pi-info-circle text-[#004A9F]" />
-                Informasi Role
+                Daftar Role Tersedia
+                <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">
+                  {rolesData.length} role
+                </span>
               </h3>
             </div>
             <div className="p-5 space-y-4">
-              {rolesData.map((role) => (
-                <div key={role.id} className="p-3 rounded-lg border border-slate-100 bg-slate-50">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                      role.name === 'admin' ? 'bg-red-100' : 'bg-blue-100'
-                    }`}>
-                      <i className={`pi pi-${role.name === 'admin' ? 'star-fill' : 'user'} ${
-                        role.name === 'admin' ? 'text-red-500' : 'text-blue-500'
-                      }`} />
-                    </div>
-                    <div>
-                      <div className="font-semibold text-slate-800">
-                        {role.name.charAt(0).toUpperCase() + role.name.slice(1).replace('_', ' ')}
+              {rolesData.length === 0 ? (
+                <div className="text-center py-6 text-slate-400">
+                  <i className="pi pi-inbox text-3xl mb-3" />
+                  <p>Tidak ada role tersedia</p>
+                </div>
+              ) : (
+                rolesData.map((role) => (
+                  <div key={role.value} className={`p-3 rounded-lg border ${selectedRoleValue === role.value ? 'border-blue-300 bg-blue-50' : 'border-slate-100 bg-slate-50'} hover:bg-slate-100 transition-colors`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        role.originalName === 'admin' ? 'bg-red-100' : 'bg-blue-100'
+                      }`}>
+                        <i className={`pi pi-${role.originalName === 'admin' ? 'star-fill' : 'user'} ${
+                          role.originalName === 'admin' ? 'text-red-500' : 'text-blue-500'
+                        }`} />
                       </div>
-                      <div className="text-slate-500 text-xs mt-1">
-                        {role.description || 'Tidak ada deskripsi'}
+                      <div>
+                        <div className="font-semibold text-slate-800">
+                          {role.label}
+                        </div>
+                        <div className="text-slate-500 text-xs mt-1">
+                          ID: {role.value}
+                        </div>
                       </div>
+                      {selectedRoleValue === role.value && (
+                        <div className="ml-auto">
+                          <i className="pi pi-check-circle text-emerald-500" />
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
 
@@ -312,7 +381,7 @@ const AddUser = () => {
                   <i className="pi pi-check text-blue-500 text-xs" />
                 </div>
                 <div className="text-sm text-slate-600">
-                  <span className="font-medium">Password yang kuat:</span> Minimal 6 karakter dengan kombinasi huruf dan angka
+                  <span className="font-medium">Admin:</span> Akses penuh ke semua fitur sistem
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -320,7 +389,7 @@ const AddUser = () => {
                   <i className="pi pi-check text-blue-500 text-xs" />
                 </div>
                 <div className="text-sm text-slate-600">
-                  <span className="font-medium">Email valid:</span> Pastikan format email benar untuk proses verifikasi
+                  <span className="font-medium">Customer Service:</span> Hanya dapat mengelola antrian dan loket
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -328,7 +397,7 @@ const AddUser = () => {
                   <i className="pi pi-check text-blue-500 text-xs" />
                 </div>
                 <div className="text-sm text-slate-600">
-                  <span className="font-medium">Role sesuai:</span> Pilih role berdasarkan kebutuhan akses user
+                  <span className="font-medium">Password:</span> Minimal 8 karakter dengan kombinasi huruf dan angka
                 </div>
               </div>
             </div>
