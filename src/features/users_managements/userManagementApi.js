@@ -30,7 +30,6 @@ export const userManagementApi = createApi({
         return `users?${queryParams.toString()}`;
       },
       transformResponse: (response) => {
-        // Transform response to match expected structure
         return {
           data: response.data || response || [],
           meta: {
@@ -110,7 +109,7 @@ export const userManagementApi = createApi({
       ],
     }),
 
-    // Assign counter to user
+    // Assign SINGLE counter to user (sesuai dengan api.php)
     assignCounterToUser: builder.mutation({
       query: ({ id, counter_id }) => ({
         url: `users/${id}/assign-counter`,
@@ -123,7 +122,7 @@ export const userManagementApi = createApi({
       ],
     }),
 
-    // Unassign counter from user
+    // Unassign counter from user (sesuai dengan api.php)
     unassignCounterFromUser: builder.mutation({
       query: (id) => ({
         url: `users/${id}/unassign-counter`,
@@ -175,7 +174,17 @@ export const userManagementApi = createApi({
 
     // Get all counters
     getCounters: builder.query({
-      query: () => 'counters',
+      query: (params = {}) => {
+        const queryParams = new URLSearchParams();
+        
+        if (params.search) queryParams.append('search', params.search);
+        if (params.sort) queryParams.append('sort', params.sort);
+        if (params.order) queryParams.append('order', params.order);
+        if (params.is_active !== undefined) queryParams.append('is_active', params.is_active);
+        
+        const queryString = queryParams.toString();
+        return `counters${queryString ? `?${queryString}` : ''}`;
+      },
       transformResponse: (response) => {
         return {
           data: response.data || response || [],
@@ -184,12 +193,66 @@ export const userManagementApi = createApi({
       providesTags: ['Counter'],
     }),
 
-    // Get available counters (not assigned)
+    // Get available counters (not assigned to any user)
     getAvailableCounters: builder.query({
       query: () => 'counters?available=true',
       transformResponse: (response) => {
         return {
           data: response.data || response || [],
+        };
+      },
+      providesTags: ['Counter'],
+    }),
+
+    // Get single counter
+    getCounter: builder.query({
+      query: (id) => `counters/${id}`,
+      transformResponse: (response) => {
+        return {
+          data: response.data || response,
+        };
+      },
+      providesTags: (result, error, id) => [{ type: 'Counter', id }],
+    }),
+
+    // Create counter
+    createCounter: builder.mutation({
+      query: (counterData) => ({
+        url: 'counters',
+        method: 'POST',
+        body: counterData,
+      }),
+      invalidatesTags: [{ type: 'Counter', id: 'LIST' }],
+    }),
+
+    // Update counter
+    updateCounter: builder.mutation({
+      query: ({ id, ...counterData }) => ({
+        url: `counters/${id}`,
+        method: 'PUT',
+        body: counterData,
+      }),
+      invalidatesTags: (result, error, { id }) => [
+        { type: 'Counter', id },
+        { type: 'Counter', id: 'LIST' },
+      ],
+    }),
+
+    // Delete counter
+    deleteCounter: builder.mutation({
+      query: (id) => ({
+        url: `counters/${id}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: [{ type: 'Counter', id: 'LIST' }],
+    }),
+
+    // Get counters statistics
+    getCounterStats: builder.query({
+      query: () => 'counters/statistics',
+      transformResponse: (response) => {
+        return {
+          data: response.data || response || {},
         };
       },
       providesTags: ['Counter'],
@@ -212,4 +275,9 @@ export const {
   useGetRolesQuery,
   useGetCountersQuery,
   useGetAvailableCountersQuery,
+  useGetCounterQuery,
+  useCreateCounterMutation,
+  useUpdateCounterMutation,
+  useDeleteCounterMutation,
+  useGetCounterStatsQuery,
 } = userManagementApi;

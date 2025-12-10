@@ -60,7 +60,7 @@ export default function App() {
         <Route path="users/restore" element={<RestoreUser />} />
         <Route path="users/:id" element={<DetailUser />} />
         <Route path="users/:id/edit" element={<EditUser />} />
-        <Route path="users/loket-management" element={<LoketUser />} />
+        <Route path="users/:id/loket-management" element={<LoketUser />} />
         
         <Route path="roles" element={<RolesHome />} />
       </Route>

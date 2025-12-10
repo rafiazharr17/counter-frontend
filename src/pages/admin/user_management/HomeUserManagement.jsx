@@ -1,39 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   useGetUsersQuery,
   useGetCountersQuery,
-} from '../../../features/users_managements/userManagementApi';
+  useGetArchivedUsersQuery,
+} from "../../../features/users_managements/userManagementApi";
 
 // PrimeReact Components
-import { DataTable } from 'primereact/datatable';
-import { Column } from 'primereact/column';
-import { Button } from 'primereact/button';
-import { InputText } from 'primereact/inputtext';
-import { Dropdown } from 'primereact/dropdown';
-import { Toast } from 'primereact/toast';
-import { Card } from 'primereact/card';
-import { Badge } from 'primereact/badge';
-import { Tooltip } from 'primereact/tooltip';
-import { ProgressSpinner } from 'primereact/progressspinner';
+import { DataTable } from "primereact/datatable";
+import { Column } from "primereact/column";
+import { Button } from "primereact/button";
+import { InputText } from "primereact/inputtext";
+import { Dropdown } from "primereact/dropdown";
+import { Toast } from "primereact/toast";
+import { Card } from "primereact/card";
+import { Tooltip } from "primereact/tooltip";
 
 const HomeUserManagement = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = React.useRef(null);
-  
+
   const [filters, setFilters] = useState({
-    search: '',
-    sort: 'id',
-    order: 'desc',
+    search: "",
+    sort: "id",
+    order: "desc",
     archived: 0,
     page: 1,
   });
 
   // Check if user is admin
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    if (user.role?.name !== 'admin') {
-      navigate('/admin');
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    if (user.role?.name !== "admin") {
+      navigate("/admin");
     }
   }, [navigate]);
 
@@ -43,10 +43,39 @@ const HomeUserManagement = () => {
     isLoading,
     isError,
     error,
-    refetch,
+    refetch: refetchUsers,
   } = useGetUsersQuery(filters);
 
   const { data: countersResponse } = useGetCountersQuery();
+
+  // Tambahkan query untuk mendapatkan data user terhapus
+  const {
+    data: archivedUsersResponse,
+    isLoading: isLoadingArchived,
+    refetch: refetchArchivedUsers,
+  } = useGetArchivedUsersQuery();
+
+  // Auto-refresh ketika navigasi dari DetailUser setelah delete
+  useEffect(() => {
+    if (location.state?.shouldRefresh) {
+      // Refetch kedua query untuk mendapatkan data terbaru
+      refetchUsers();
+      refetchArchivedUsers();
+
+      // Tampilkan toast sukses jika ada
+      if (location.state?.deletedUser) {
+        toast.current?.show?.({
+          severity: "success",
+          summary: "Berhasil!",
+          detail: `User "${location.state.deletedUser}" berhasil dihapus`,
+          life: 3000,
+        });
+      }
+
+      // Clear state agar tidak trigger terus
+      navigate(".", { replace: true, state: {} });
+    }
+  }, [location.state, refetchUsers, refetchArchivedUsers, navigate]);
 
   // Data extraction
   const usersData = usersResponse?.data || [];
@@ -61,13 +90,17 @@ const HomeUserManagement = () => {
 
   const countersData = countersResponse?.data || countersResponse || [];
 
+  // Data user terhapus
+  const archivedUsersData =
+    archivedUsersResponse?.data || archivedUsersResponse || [];
+
   // Handlers
   const handleNavigateToAddUser = () => {
-    navigate('/admin/users/add');
+    navigate("/admin/users/add");
   };
 
   const handleNavigateToRestore = () => {
-    navigate('/admin/users/restore');
+    navigate("/admin/users/restore");
   };
 
   const handleRowClick = (e) => {
@@ -77,78 +110,80 @@ const HomeUserManagement = () => {
 
   // Helper functions
   const formatDate = (dateString) => {
-    if (!dateString) return '-';
+    if (!dateString) return "-";
     try {
       const date = new Date(dateString);
-      return date.toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
+      return date.toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
       });
     } catch (e) {
-      return '-';
+      return "-";
     }
   };
 
   const getRoleName = (user) => {
     if (user.role?.name) return user.role.name;
-    if (user.role_id === 1) return 'admin';
-    if (user.role_id === 2) return 'customer_service';
-    return 'unknown';
+    if (user.role_id === 1) return "admin";
+    if (user.role_id === 2) return "customer_service";
+    return "unknown";
   };
 
   const getRoleColor = (user) => {
     const roleName = getRoleName(user);
     switch (roleName) {
-      case 'admin':
-        return 'bg-gradient-to-r from-red-500 to-rose-600';
-      case 'customer_service':
-        return 'bg-gradient-to-r from-amber-500 to-orange-500';
+      case "admin":
+        return "bg-gradient-to-r from-red-500 to-rose-600";
+      case "customer_service":
+        return "bg-gradient-to-r from-amber-500 to-orange-500";
       default:
-        return 'bg-gradient-to-r from-blue-500 to-blue-600';
+        return "bg-gradient-to-r from-blue-500 to-blue-600";
     }
   };
 
   const getRoleDisplayName = (user) => {
     const roleName = getRoleName(user);
     switch (roleName) {
-      case 'admin':
-        return 'Admin';
-      case 'customer_service':
-        return 'Customer Service';
+      case "admin":
+        return "Admin";
+      case "customer_service":
+        return "Customer Service";
       default:
-        return roleName.charAt(0).toUpperCase() + roleName.slice(1).replace('_', ' ');
+        return (
+          roleName.charAt(0).toUpperCase() + roleName.slice(1).replace("_", " ")
+        );
     }
   };
 
   // Get counter info by ID
   const getCounterInfo = (counterId) => {
     if (!counterId) return null;
-    return countersData.find(counter => counter.id === counterId);
+    return countersData.find((counter) => counter.id === counterId);
   };
 
   // Stats calculation
   const userStats = {
     total: pagination.total,
-    active: usersData.filter(u => !u.deleted_at).length,
-    archived: usersData.filter(u => u.deleted_at).length,
-    admin: usersData.filter(u => getRoleName(u) === 'admin').length,
-    cs: usersData.filter(u => getRoleName(u) === 'customer_service').length,
+    active: usersData.filter((u) => !u.deleted_at).length,
+    deleted: archivedUsersData.length, // Ambil dari API users/trashed
+    admin: usersData.filter((u) => getRoleName(u) === "admin").length,
+    cs: usersData.filter((u) => getRoleName(u) === "customer_service").length,
   };
 
   // Table Columns - WITHOUT ACTIONS COLUMN
   const columns = [
     {
-      field: 'id',
-      header: 'ID',
+      field: "id",
+      header: "ID",
       sortable: true,
-      style: { width: '80px' },
+      style: { width: "80px" },
     },
     {
-      field: 'name',
-      header: 'Nama',
+      field: "name",
+      header: "Nama",
       sortable: true,
       body: (rowData) => (
         <div className="flex items-center gap-3 cursor-pointer group">
@@ -165,19 +200,22 @@ const HomeUserManagement = () => {
       ),
     },
     {
-      field: 'role',
-      header: 'Role',
+      field: "role",
+      header: "Role",
       body: (rowData) => {
         return (
-          <span className={`px-3 py-1.5 rounded-full text-xs font-semibold text-white ${getRoleColor(rowData)}`}>
+          <span
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold text-white ${getRoleColor(
+              rowData
+            )}`}>
             {getRoleDisplayName(rowData)}
           </span>
         );
       },
     },
     {
-      field: 'counter_id',
-      header: 'Loket',
+      field: "counter_id",
+      header: "Loket",
       body: (rowData) => {
         if (rowData.counter_id) {
           const counterInfo = getCounterInfo(rowData.counter_id);
@@ -191,7 +229,9 @@ const HomeUserManagement = () => {
                   {counterInfo?.name || `Loket #${rowData.counter_id}`}
                 </div>
                 <div className="text-xs text-slate-500">
-                  {counterInfo?.prefix ? `Kode: ${counterInfo.prefix}` : 'Assigned'}
+                  {counterInfo?.prefix
+                    ? `Kode: ${counterInfo.prefix}`
+                    : "Assigned"}
                 </div>
               </div>
             </div>
@@ -206,16 +246,16 @@ const HomeUserManagement = () => {
       },
     },
     {
-      field: 'created_at',
-      header: 'Dibuat',
+      field: "created_at",
+      header: "Dibuat",
       body: (rowData) => (
         <div className="text-sm">
           <div className="text-slate-800">{formatDate(rowData.created_at)}</div>
           <div className="text-xs text-slate-500">
             {rowData.deleted_at ? (
-              <span className="inline-flex items-center gap-1 text-amber-600">
-                <i className="pi pi-archive text-xs" />
-                Terarsip
+              <span className="inline-flex items-center gap-1 text-red-600">
+                <i className="pi pi-trash text-xs" />
+                Terhapus {formatDate(rowData.deleted_at)}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 text-emerald-600">
@@ -242,22 +282,24 @@ const HomeUserManagement = () => {
             <div className="h-10 bg-slate-200 rounded w-32"></div>
           </div>
         </div>
-        
+
         {/* Stats Skeleton */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-5 shadow-lg shadow-slate-200/20 animate-pulse">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-5 shadow-lg shadow-slate-200/20 animate-pulse">
               <div className="h-4 bg-slate-200 rounded w-1/2 mb-3"></div>
               <div className="h-8 bg-slate-200 rounded w-3/4"></div>
             </div>
           ))}
         </div>
-        
+
         {/* Table Skeleton */}
         <Card className="shadow-sm animate-pulse">
           <div className="h-6 bg-slate-200 rounded w-1/4 mb-4"></div>
           <div className="space-y-3">
-            {[1, 2, 3, 4, 5].map(i => (
+            {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="h-12 bg-slate-100 rounded"></div>
             ))}
           </div>
@@ -280,14 +322,15 @@ const HomeUserManagement = () => {
                 Gagal memuat data user
               </p>
               <p className="text-red-600 mt-1 text-xs sm:text-sm">
-                {error?.data?.message || 'Silakan refresh halaman atau coba lagi nanti.'}
+                {error?.data?.message ||
+                  "Silakan refresh halaman atau coba lagi nanti."}
               </p>
             </div>
             <Button
               icon="pi pi-refresh"
               label="Coba Lagi"
               className="bg-red-500 hover:bg-red-600 text-white whitespace-nowrap"
-              onClick={refetch}
+              onClick={refetchUsers}
             />
           </div>
         </div>
@@ -315,31 +358,11 @@ const HomeUserManagement = () => {
 
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-2">
-            {/* Tombol User Terarsip */}
-            <Button
-              icon={filters.archived === 0 ? "pi pi-archive" : "pi pi-users"}
-              label={filters.archived === 0 ? "User Terarsip" : "User Aktif"}
-              className={`${
-                filters.archived === 0 
-                  ? "bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600"
-                  : "bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600"
-              } text-white py-2 sm:py-3 px-3 sm:px-4 rounded-xl gap-2 shadow-lg hover:shadow-xl transition-all 
-                 duration-300 hover:scale-105 border-0 font-semibold text-sm sm:text-base whitespace-nowrap
-                 flex items-center justify-center`}
-              onClick={() => {
-                setFilters(prev => ({
-                  ...prev,
-                  archived: prev.archived === 0 ? 1 : 0,
-                  page: 1,
-                }));
-              }}
-            />
-
-            {/* Tombol Halaman Restore */}
+            {/* Tombol User Terhapus */}
             <Button
               icon="pi pi-history"
-              label="User Dihapus"
-              className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 
+              label="User Terhapus"
+              className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 
                        text-white py-2 sm:py-3 px-3 sm:px-4 rounded-xl gap-2 shadow-lg hover:shadow-xl transition-all 
                        duration-300 hover:scale-105 border-0 font-semibold text-sm sm:text-base whitespace-nowrap
                        flex items-center justify-center"
@@ -366,8 +389,8 @@ const HomeUserManagement = () => {
             <InputText
               value={filters.search}
               onChange={(e) => {
-                setFilters(prev => ({ 
-                  ...prev, 
+                setFilters((prev) => ({
+                  ...prev,
                   search: e.target.value,
                   page: 1,
                 }));
@@ -378,35 +401,6 @@ const HomeUserManagement = () => {
                  shadow-sm py-2 sm:py-3 text-sm sm:text-base"
             />
           </div>
-
-          <div className="flex gap-2">
-            <Dropdown
-              value={filters.sort}
-              options={[
-                { label: 'Urutkan: ID', value: 'id' },
-                { label: 'Urutkan: Nama', value: 'name' },
-                { label: 'Urutkan: Email', value: 'email' },
-                { label: 'Urutkan: Dibuat', value: 'created_at' },
-              ]}
-              onChange={(e) => {
-                setFilters(prev => ({ ...prev, sort: e.value, page: 1 }));
-              }}
-              placeholder="Urutkan"
-              className="min-w-[160px]"
-            />
-            
-            <Button
-              icon={`pi pi-sort-${filters.order === 'asc' ? 'up' : 'down'}-alt`}
-              className="p-button-outlined border-slate-300 text-slate-600 hover:bg-slate-50"
-              onClick={() => {
-                setFilters(prev => ({
-                  ...prev,
-                  order: prev.order === 'asc' ? 'desc' : 'asc',
-                }));
-              }}
-              tooltip={`Urutkan ${filters.order === 'asc' ? 'Menurun' : 'Menaik'}`}
-            />
-          </div>
         </div>
       </div>
 
@@ -414,39 +408,49 @@ const HomeUserManagement = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
-            <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-[#004A9F]">
+            <div className="text-2xl sm:text-3xl md:text-4xl font-semibold text-[#004A9F]">
               {userStats.total}
+            </div>
+            <p className="text-gray-700 mt-1 text-sm sm:text-base">
+              Total User
             </p>
-            <p className="text-gray-700 mt-1 text-sm sm:text-base">Total User</p>
           </div>
           <i className="pi pi-users text-[#004A9F] text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
-            <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-emerald-600">
+            <div className="text-2xl sm:text-3xl md:text-4xl font-semibold text-emerald-600">
               {userStats.active}
+            </div>
+            <p className="text-gray-700 mt-1 text-sm sm:text-base">
+              User Aktif
             </p>
-            <p className="text-gray-700 mt-1 text-sm sm:text-base">User Aktif</p>
           </div>
           <i className="pi pi-user text-emerald-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
-            <p className="text-2xl sm:text-3xl md:text-4xl font-semibold text-amber-600">
-              {userStats.archived}
+            <div className="text-2xl sm:text-3xl md:text-4xl font-semibold text-red-600">
+              {isLoadingArchived ? (
+                <div className="h-8 w-12 bg-gray-200 rounded animate-pulse"></div>
+              ) : (
+                userStats.deleted
+              )}
+            </div>
+            <p className="text-gray-700 mt-1 text-sm sm:text-base">
+              User Terhapus
             </p>
-            <p className="text-gray-700 mt-1 text-sm sm:text-base">User Terarsip</p>
           </div>
-          <i className="pi pi-archive text-amber-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
+          <i className="pi pi-trash text-red-600 text-3xl sm:text-4xl md:text-5xl opacity-80"></i>
         </div>
 
         <div className="bg-gradient-to-br from-white to-slate-50/80 border-2 border-slate-200/60 rounded-2xl p-4 sm:p-5 shadow-lg shadow-slate-200/20 flex items-center justify-between">
           <div>
-            <p className="font-semibold text-teal-700 text-base sm:text-lg md:text-lg">
+            <div className="font-semibold text-teal-700 text-base sm:text-lg md:text-lg">
               {userStats.admin} Admin, {userStats.cs} CS
-            </p>
+            </div>
             <p className="text-gray-500 text-xs sm:text-sm md:text-sm">
               Distribusi Role
             </p>
@@ -461,14 +465,15 @@ const HomeUserManagement = () => {
           <div>
             <p className="font-semibold text-slate-800 text-lg flex gap-2 items-center">
               <i className="pi pi-users text-[#004A9F]"></i>
-              Daftar User {filters.archived === 1 ? 'Terarsip' : 'Aktif'}
+              Daftar User Aktif
             </p>
             <p className="text-slate-500 text-xs mt-1">
               Klik pada baris untuk melihat detail user
             </p>
           </div>
           <div className="text-sm text-slate-500">
-            Halaman {pagination.current_page} dari {pagination.last_page} • Total: {pagination.total} user
+            Halaman {pagination.current_page} dari {pagination.last_page} •
+            Total: {pagination.total} user
           </div>
         </div>
 
@@ -478,30 +483,26 @@ const HomeUserManagement = () => {
               <i className="pi pi-inbox text-slate-400 text-2xl sm:text-3xl" />
             </div>
             <p className="text-lg sm:text-xl font-semibold text-slate-600 mb-2">
-              {filters.archived === 0 ? "Belum ada user" : "Tidak ada user terarsip"}
+              Belum ada user
             </p>
             <p className="text-slate-500 max-w-sm mx-auto text-sm sm:text-base">
-              {filters.archived === 0
-                ? "Mulai dengan menambahkan user pertama untuk mengelola sistem"
-                : "Semua user saat ini aktif, tidak ada yang terarsip"}
+              Mulai dengan menambahkan user pertama untuk mengelola sistem
             </p>
-            {filters.archived === 0 && (
-              <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-                <Button
-                  icon="pi pi-plus"
-                  label="Tambah User Pertama"
-                  className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white"
-                  onClick={handleNavigateToAddUser}
-                />
-                <Button
-                  icon="pi pi-history"
-                  label="Cek User Dihapus"
-                  outlined
-                  className="border-orange-500 text-orange-500 hover:bg-orange-50"
-                  onClick={handleNavigateToRestore}
-                />
-              </div>
-            )}
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+              <Button
+                icon="pi pi-plus"
+                label="Tambah User Pertama"
+                className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white"
+                onClick={handleNavigateToAddUser}
+              />
+              <Button
+                icon="pi pi-history"
+                label="Cek User Terhapus"
+                outlined
+                className="border-red-500 text-red-500 hover:bg-red-50"
+                onClick={handleNavigateToRestore}
+              />
+            </div>
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-slate-200">
@@ -519,16 +520,15 @@ const HomeUserManagement = () => {
               lazy
               first={(filters.page - 1) * pagination.per_page}
               onPage={(e) => {
-                setFilters(prev => ({ ...prev, page: e.page + 1 }));
+                setFilters((prev) => ({ ...prev, page: e.page + 1 }));
               }}
-              onRowClick={handleRowClick} // Add click handler here
+              onRowClick={handleRowClick}
               selectionMode="single"
               rowClassName="hover:bg-blue-50 transition-colors duration-200"
               paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
               currentPageReportTemplate="Menampilkan {first} sampai {last} dari {totalRecords} data"
               scrollable
-              scrollHeight="500px"
-            >
+              scrollHeight="500px">
               {columns.map((col) => (
                 <Column
                   key={col.field}

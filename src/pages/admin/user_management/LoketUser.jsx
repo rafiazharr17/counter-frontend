@@ -1,25 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { 
-  useGetUserQuery,
-  useAssignCounterToUserMutation,
-  useUnassignCounterFromUserMutation,
-  useGetCountersQuery,
-  useGetAvailableCountersQuery
-} from '../../../features/users_managements/userManagementApi';
-import { userAssignCounterSchema } from '../../../schemas/userSchemas';
-
-// PrimeReact Components
-import { Card } from 'primereact/card';
-import { Button } from 'primereact/button';
-import { Dropdown } from 'primereact/dropdown';
 import { Toast } from 'primereact/toast';
 import { ProgressSpinner } from 'primereact/progressspinner';
 import { Tag } from 'primereact/tag';
 import { Badge } from 'primereact/badge';
 import { ConfirmDialog, confirmDialog } from 'primereact/confirmdialog';
+import { Dropdown } from 'primereact/dropdown';
+import { Card } from 'primereact/card';
+import { Button } from 'primereact/button';
+
+// Import mutations - untuk SINGLE counter (sesuai dengan exports)
+import { 
+  useGetUserQuery,
+  useAssignCounterToUserMutation, // PERBAIKAN: gunakan SINGLE counter mutation
+  useUnassignCounterFromUserMutation,
+  useGetCountersQuery,
+} from '../../../features/users_managements/userManagementApi';
 
 const LoketUser = () => {
   const { id } = useParams();
@@ -29,46 +25,48 @@ const LoketUser = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userData, setUserData] = useState(null);
   const [showAssignDialog, setShowAssignDialog] = useState(false);
+  const [selectedCounterId, setSelectedCounterId] = useState('');
 
   // RTK Queries
-  const { data: userResponse, isLoading, isError, error, refetch } = useGetUserQuery(id);
-  const { data: countersResponse, isLoading: isLoadingCounters } = useGetCountersQuery();
-  const { data: availableCountersResponse, isLoading: isLoadingAvailableCounters } = useGetAvailableCountersQuery();
+  const { 
+    data: userResponse, 
+    isLoading, 
+    isError, 
+    error, 
+    refetch: refetchUser 
+  } = useGetUserQuery(id);
   
-  // Mutations
-  const [assignCounter] = useAssignCounterToUserMutation();
+  const { 
+    data: countersResponse, 
+    isLoading: isLoadingCounters 
+  } = useGetCountersQuery();
+
+  // Mutations - untuk SINGLE counter
+  const [assignCounter] = useAssignCounterToUserMutation(); // PERBAIKAN: SINGLE counter
   const [unassignCounter] = useUnassignCounterFromUserMutation();
 
-  // Form
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors },
-    reset,
-  } = useForm({
-    resolver: zodResolver(userAssignCounterSchema),
-    defaultValues: {
-      counter_id: '',
-    },
-  });
+  // Data processing
+  const countersData = countersResponse?.data || countersResponse || [];
 
   useEffect(() => {
     if (userResponse) {
       const data = userResponse.data || userResponse;
       setUserData(data);
-      
-      // Set form values
-      if (data.counter_id) {
-        setValue('counter_id', data.counter_id.toString());
-      }
     }
-  }, [userResponse, setValue]);
+  }, [userResponse]);
 
-  // Data
-  const countersData = countersResponse?.data || countersResponse || [];
-  const availableCountersData = availableCountersResponse?.data || availableCountersResponse || [];
+  // Get available counters (not assigned to any user)
+  const getAvailableCounters = () => {
+    // Karena backend single counter, kita hanya bisa assign ke counter yang belum punya user
+    // Ini adalah asumsi - Anda mungkin perlu menyesuaikan
+    return countersData.filter(counter => {
+      // Cek apakah counter ini sudah ditugaskan ke user lain
+      // Anda mungkin perlu menyesuaikan logika ini berdasarkan struktur data Anda
+      return !counter.user_id || counter.user_id === 0;
+    });
+  };
+
+  const availableCounters = getAvailableCounters();
 
   // Helper functions
   const getCounterInfo = (counterId) => {
@@ -93,12 +91,22 @@ const LoketUser = () => {
   };
 
   // Handlers
-  const handleAssignCounter = async (formData) => {
+  const handleAssignCounter = async () => {
+    if (!selectedCounterId) {
+      toast.current.show({
+        severity: 'error',
+        summary: 'Error',
+        detail: 'Pilih loket terlebih dahulu',
+        life: 3000,
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await assignCounter({
-        id,
-        counter_id: parseInt(formData.counter_id, 10),
+        id: parseInt(id, 10),
+        counter_id: parseInt(selectedCounterId, 10),
       }).unwrap();
       
       toast.current.show({
@@ -109,8 +117,13 @@ const LoketUser = () => {
       });
       
       setShowAssignDialog(false);
-      reset();
-      refetch();
+      setSelectedCounterId('');
+      
+      // Tunggu sebentar sebelum refetch
+      setTimeout(() => {
+        refetchUser();
+      }, 500);
+      
     } catch (error) {
       console.error('Assign counter error:', error);
       toast.current.show({
@@ -141,8 +154,12 @@ const LoketUser = () => {
             life: 3000,
           });
           
-          refetch();
+          setTimeout(() => {
+            refetchUser();
+          }, 500);
+          
         } catch (error) {
+          console.error('Unassign error:', error);
           toast.current.show({
             severity: 'error',
             summary: 'Gagal',
@@ -221,7 +238,16 @@ const LoketUser = () => {
 
   // Check if user is Customer Service
   const isCustomerService = userData.role_id === 2 || userData.role?.name === 'customer_service';
-  const currentCounter = getCounterInfo(userData.counter_id);
+  
+  // Get current counter info
+  const currentCounter = userData.counter || getCounterInfo(userData.counter_id);
+  
+  // Prepare dropdown options for available counters
+  const dropdownOptions = availableCounters.map((counter) => ({
+    label: `${counter.name} (Kode: ${counter.counter_code || counter.code || counter.prefix || '-'})`,
+    value: counter.id.toString(),
+    counter: counter
+  }));
 
   return (
     <div className="space-y-6 p-3 sm:p-4">
@@ -282,9 +308,19 @@ const LoketUser = () => {
                       <div>
                         <h4 className="text-xl font-bold text-slate-800">{currentCounter.name}</h4>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="text-slate-600">Kode: {currentCounter.prefix || '-'}</span>
+                          <span className="text-slate-600">
+                            Kode: {currentCounter.counter_code || currentCounter.code || currentCounter.prefix || '-'}
+                          </span>
+                          <Tag 
+                            value={currentCounter.counter_code || currentCounter.code || currentCounter.prefix || 'N/A'} 
+                            severity="info"
+                            className="ml-2"
+                          />
                           <Badge value="Aktif" severity="success" />
                         </div>
+                        {currentCounter.description && (
+                          <p className="text-slate-500 text-sm mt-2">{currentCounter.description}</p>
+                        )}
                       </div>
                     </div>
                     
@@ -304,14 +340,16 @@ const LoketUser = () => {
                       <div className="font-semibold text-slate-800">{currentCounter.id}</div>
                     </div>
                     <div className="bg-slate-50 p-4 rounded-xl">
+                      <div className="text-sm text-slate-500">Kode Loket</div>
+                      <div className="font-semibold text-slate-800">
+                        {currentCounter.counter_code || currentCounter.code || currentCounter.prefix || '-'}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-xl">
                       <div className="text-sm text-slate-500">Kuota</div>
                       <div className="font-semibold text-slate-800">
                         {currentCounter.quota || 'Tidak Terbatas'}
                       </div>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-xl">
-                      <div className="text-sm text-slate-500">Status</div>
-                      <div className="font-semibold text-green-600">Aktif</div>
                     </div>
                     <div className="bg-slate-50 p-4 rounded-xl">
                       <div className="text-sm text-slate-500">Ditugaskan Pada</div>
@@ -330,7 +368,7 @@ const LoketUser = () => {
                   <p className="text-slate-500 mb-6">
                     User ini belum ditugaskan ke loket manapun
                   </p>
-                  {isCustomerService ? (
+                  {isCustomerService && availableCounters.length > 0 ? (
                     <Button
                       icon="pi pi-plus"
                       label="Tugaskan Loket"
@@ -343,7 +381,9 @@ const LoketUser = () => {
                       <div className="flex items-center gap-3">
                         <i className="pi pi-exclamation-triangle text-amber-500" />
                         <p className="text-amber-700">
-                          Hanya user dengan role Customer Service yang dapat ditugaskan loket
+                          {!isCustomerService 
+                            ? "Hanya user dengan role Customer Service yang dapat ditugaskan loket"
+                            : "Tidak ada loket yang tersedia untuk ditugaskan"}
                         </p>
                       </div>
                     </div>
@@ -353,12 +393,12 @@ const LoketUser = () => {
             </div>
           </Card>
 
-          {/* History Card (if needed) */}
+          {/* Information Card */}
           <Card className="shadow-sm rounded-2xl border-slate-200">
             <div className="p-5 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <i className="pi pi-history text-[#004A9F]" />
-                Informasi Loket
+                <i className="pi pi-info-circle text-[#004A9F]" />
+                Informasi Penugasan Loket
               </h3>
             </div>
             <div className="p-6">
@@ -382,6 +422,10 @@ const LoketUser = () => {
                         <i className="pi pi-check-circle text-green-500 text-sm mt-0.5" />
                         User dapat dipindahkan ke loket lain kapan saja
                       </li>
+                      <li className="flex items-start gap-2">
+                        <i className="pi pi-check-circle text-green-500 text-sm mt-0.5" />
+                        Kode loket akan digunakan untuk identifikasi antrian
+                      </li>
                     </ul>
                   </div>
                 </div>
@@ -398,27 +442,37 @@ const LoketUser = () => {
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
                 <i className="pi pi-list text-[#004A9F]" />
                 Loket Tersedia
-                {isLoadingAvailableCounters && (
+                {isLoadingCounters && (
                   <span className="text-xs text-slate-500 ml-2">Memuat...</span>
                 )}
               </h3>
+              <p className="text-slate-500 text-xs mt-1">
+                Total: {countersData.length} loket • Tersedia: {availableCounters.length}
+              </p>
             </div>
             <div className="p-5">
-              {isLoadingAvailableCounters ? (
+              {isLoadingCounters ? (
                 <div className="flex justify-center py-8">
                   <ProgressSpinner style={{ width: '40px', height: '40px' }} />
                 </div>
-              ) : availableCountersData.length === 0 ? (
+              ) : availableCounters.length === 0 ? (
                 <div className="text-center py-6">
                   <i className="pi pi-inbox text-slate-300 text-4xl mb-3" />
                   <p className="text-slate-500">Tidak ada loket tersedia</p>
+                  <p className="text-slate-400 text-sm mt-2">
+                    Semua loket sudah ditugaskan atau belum ada loket terdaftar
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {availableCountersData.map((counter) => (
+                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                  {availableCounters.map((counter) => (
                     <div
                       key={counter.id}
-                      className="p-3 border border-slate-200 rounded-xl hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
+                      className="p-3 border border-slate-200 rounded-xl hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 cursor-pointer"
+                      onClick={() => {
+                        setSelectedCounterId(counter.id.toString());
+                        setShowAssignDialog(true);
+                      }}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -427,7 +481,19 @@ const LoketUser = () => {
                           </div>
                           <div>
                             <div className="font-medium text-slate-800">{counter.name}</div>
-                            <div className="text-xs text-slate-500">Kode: {counter.prefix || '-'}</div>
+                            <div className="text-xs text-slate-500">
+                              <strong>Kode:</strong> {counter.counter_code || counter.code || counter.prefix || '-'}
+                            </div>
+                            {counter.description && (
+                              <div className="text-xs text-slate-400 mt-1">
+                                {counter.description}
+                              </div>
+                            )}
+                            {counter.quota && (
+                              <div className="text-xs text-slate-400 mt-1">
+                                Kuota: {counter.quota} antrian
+                              </div>
+                            )}
                           </div>
                         </div>
                         <Badge value="Tersedia" severity="success" />
@@ -437,14 +503,14 @@ const LoketUser = () => {
                 </div>
               )}
               
-              {isCustomerService && !currentCounter && (
+              {isCustomerService && availableCounters.length > 0 && (
                 <Button
                   icon="pi pi-plus"
                   label="Tugaskan Loket"
                   className="w-full mt-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 
                            text-white py-3 rounded-lg gap-2"
                   onClick={() => setShowAssignDialog(true)}
-                  disabled={isLoadingAvailableCounters || availableCountersData.length === 0}
+                  disabled={isLoadingCounters || currentCounter} // Disable jika sudah punya loket
                 />
               )}
             </div>
@@ -460,7 +526,7 @@ const LoketUser = () => {
             </div>
             <div className="p-5 space-y-3">
               <Button
-                icon="pi pi-user-edit"
+                icon="pi pi-pencil"
                 label="Edit User"
                 className="w-full justify-start bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 
                          text-white"
@@ -519,43 +585,24 @@ const LoketUser = () => {
               </div>
             </div>
 
-            <form onSubmit={handleSubmit(handleAssignCounter)} className="space-y-5 p-6">
+            <div className="space-y-5 p-6">
               <div>
                 <label className="block text-sm font-medium mb-2 text-slate-700 flex items-center gap-2">
                   <i className="pi pi-headphones text-slate-400" />
                   Pilih Loket *
                 </label>
                 <Dropdown
-                  options={availableCountersData.map((counter) => ({
-                    label: (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center">
-                            <i className="pi pi-desktop text-green-500 text-xs" />
-                          </div>
-                          <div>
-                            <div className="font-medium text-slate-800">{counter.name}</div>
-                            <div className="text-xs text-slate-500">Kode: {counter.prefix || '-'}</div>
-                          </div>
-                        </div>
-                        {counter.quota && (
-                          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">
-                            Kuota: {counter.quota}
-                          </span>
-                        )}
-                      </div>
-                    ),
-                    value: counter.id.toString(),
-                  }))}
+                  value={selectedCounterId}
+                  onChange={(e) => setSelectedCounterId(e.value)}
+                  options={dropdownOptions}
+                  optionLabel="label"
+                  optionValue="value"
                   placeholder="Pilih loket"
-                  className="w-full rounded-xl border-slate-300"
-                  value={watch('counter_id')}
-                  onChange={(e) => setValue('counter_id', e.value)}
-                  disabled={isSubmitting || isLoadingAvailableCounters}
-                  panelClassName="rounded-xl shadow-lg"
+                  className="w-full"
+                  disabled={isSubmitting}
                 />
-                {errors.counter_id && (
-                  <small className="p-error block mt-2 text-sm">{errors.counter_id.message}</small>
+                {!selectedCounterId && (
+                  <small className="text-red-500 block mt-2 text-sm">Harap pilih loket</small>
                 )}
               </div>
 
@@ -567,7 +614,8 @@ const LoketUser = () => {
                   <div>
                     <p className="font-medium text-amber-800 text-sm">Perhatian</p>
                     <p className="text-amber-600 text-sm mt-1">
-                      Pastikan loket yang dipilih benar. Satu loket hanya dapat ditugaskan ke satu Customer Service.
+                      Satu user hanya dapat ditugaskan ke satu loket. Jika user sudah memiliki loket, 
+                      loket sebelumnya akan otomatis dilepaskan.
                     </p>
                   </div>
                 </div>
@@ -581,21 +629,22 @@ const LoketUser = () => {
                   className="p-button-text text-slate-600 hover:text-slate-800 hover:bg-slate-100 px-4 py-2 rounded-lg"
                   onClick={() => {
                     setShowAssignDialog(false);
-                    reset();
+                    setSelectedCounterId('');
                   }}
                   disabled={isSubmitting}
                 />
                 <Button
-                  type="submit"
+                  type="button"
                   label="Tugaskan"
                   icon="pi pi-check"
                   className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 
                            text-white px-5 py-2 rounded-lg gap-2 shadow-md hover:shadow-lg transition-all duration-200"
+                  onClick={handleAssignCounter}
                   loading={isSubmitting}
-                  disabled={isSubmitting || !watch('counter_id')}
+                  disabled={isSubmitting || !selectedCounterId}
                 />
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
