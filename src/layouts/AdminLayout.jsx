@@ -132,7 +132,6 @@ export default function AdminLayout() {
             <MenuItem to="/admin" icon="pi-home" label="Dashboard" end />
             <MenuItem to="/admin/counters" icon="pi-headphones" label="Loket" />
             <MenuItem to="/admin/users" icon="pi-users" label="Manajemen User" />
-            <MenuItem to="/admin/roles" icon="pi-shield" label="Roles" />
           </nav>
         </div>
 

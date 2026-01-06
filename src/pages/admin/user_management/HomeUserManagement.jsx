@@ -11,10 +11,10 @@ import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
 import { Button } from "primereact/button";
 import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
 import { Toast } from "primereact/toast";
 import { Card } from "primereact/card";
 import { Tooltip } from "primereact/tooltip";
+import { MultiSelect } from "primereact/multiselect";
 
 const HomeUserManagement = () => {
   const navigate = useNavigate();
@@ -28,6 +28,11 @@ const HomeUserManagement = () => {
     archived: 0,
     page: 1,
   });
+
+  // State untuk filter tambahan
+  const [searchName, setSearchName] = useState("");
+  const [searchEmail, setSearchEmail] = useState("");
+  const [selectedCounters, setSelectedCounters] = useState([]);
 
   // Check if user is admin
   useEffect(() => {
@@ -106,6 +111,39 @@ const HomeUserManagement = () => {
   const handleRowClick = (e) => {
     // Navigate to user detail when row is clicked
     navigate(`/admin/users/${e.data.id}`);
+  };
+
+  // Apply filters
+  const applyFilters = () => {
+    // Gabungkan filter name dan email menjadi satu search string
+    let searchValue = "";
+    if (searchName && searchEmail) {
+      searchValue = `${searchName}|${searchEmail}`;
+    } else if (searchName) {
+      searchValue = searchName;
+    } else if (searchEmail) {
+      searchValue = searchEmail;
+    }
+    
+    setFilters((prev) => ({
+      ...prev,
+      search: searchValue,
+      page: 1, // Reset ke halaman pertama saat filter berubah
+    }));
+  };
+
+  // Reset filters
+  const resetFilters = () => {
+    setSearchName("");
+    setSearchEmail("");
+    setSelectedCounters([]);
+    setFilters({
+      search: "",
+      sort: "id",
+      order: "desc",
+      archived: 0,
+      page: 1,
+    });
   };
 
   // Helper functions
@@ -219,28 +257,59 @@ const HomeUserManagement = () => {
       body: (rowData) => {
         if (rowData.counter_id) {
           const counterInfo = getCounterInfo(rowData.counter_id);
+          const counterName = counterInfo?.name || `Loket #${rowData.counter_id}`;
+          const counterCode = counterInfo?.counter_code || 
+                             counterInfo?.code || 
+                             counterInfo?.prefix || 
+                             `#${rowData.counter_id}`;
+          
           return (
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0">
                 <i className="pi pi-desktop text-white text-sm" />
               </div>
               <div>
-                <div className="font-medium text-slate-800">
-                  {counterInfo?.name || `Loket #${rowData.counter_id}`}
+                <div className="font-medium text-slate-800 flex items-center gap-2">
+                  <span>{counterName}</span>
+                  <span className="text-xs font-normal bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">
+                    {counterCode}
+                  </span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  {counterInfo?.prefix
-                    ? `Kode: ${counterInfo.prefix}`
-                    : "Assigned"}
+                <div className="text-xs text-slate-500 flex items-center gap-1">
+                  <span className="font-medium">
+                    ID: {rowData.counter_id}
+                  </span>
+                  {counterInfo?.description && (
+                    <Tooltip
+                      target={`.counter-desc-${rowData.id}`}
+                      position="top"
+                    />
+                  )}
                 </div>
+                {counterInfo?.description && (
+                  <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                    <i
+                      className={`pi pi-info-circle counter-desc-${rowData.id}`}
+                      data-pr-tooltip={counterInfo.description}
+                    />
+                    <span className="truncate max-w-[150px]">
+                      {counterInfo.description}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           );
         }
         return (
           <div className="flex items-center gap-2 text-slate-400">
-            <i className="pi pi-times-circle" />
-            <span className="text-sm">Tidak ada loket</span>
+            <div className="w-8 h-8 rounded-full bg-gradient-to-r from-slate-300 to-slate-400 flex items-center justify-center flex-shrink-0">
+              <i className="pi pi-times-circle text-white text-sm" />
+            </div>
+            <div>
+              <div className="font-medium text-slate-400">Tidak ada loket</div>
+              <div className="text-xs text-slate-400">Belum ditugaskan</div>
+            </div>
           </div>
         );
       },
@@ -342,6 +411,8 @@ const HomeUserManagement = () => {
     <div className="space-y-6 p-3 sm:p-4">
       <Toast ref={toast} position="top-right" />
       <Tooltip target=".p-button" />
+      {/* Tambahkan Tooltip untuk counter description */}
+      <Tooltip target=".counter-desc" />
 
       {/* Header Section */}
       <div className="backdrop-blur-xl bg-white/80 border border-slate-200/80 p-4 sm:p-6 rounded-2xl shadow-lg shadow-slate-200/20">
@@ -382,24 +453,145 @@ const HomeUserManagement = () => {
           </div>
         </div>
 
-        {/* Search Section */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="relative flex-1 min-w-0">
-            <i className="pi pi-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-            <InputText
-              value={filters.search}
-              onChange={(e) => {
-                setFilters((prev) => ({
-                  ...prev,
-                  search: e.target.value,
-                  page: 1,
-                }));
-              }}
-              placeholder="Cari nama atau email..."
-              className="w-full rounded-xl border border-slate-300 pl-10 pr-3
-                 focus:border-[#004A9F] focus:ring-2 focus:ring-[#004A9F]/30 
-                 shadow-sm py-2 sm:py-3 text-sm sm:text-base"
-            />
+        {/* Filter Section */}
+        <div className="space-y-4">
+          {/* Quick Search */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="relative flex-1 min-w-0">
+              <i className="pi pi-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+              <InputText
+                value={filters.search}
+                onChange={(e) => {
+                  setFilters((prev) => ({
+                    ...prev,
+                    search: e.target.value,
+                    page: 1,
+                  }));
+                }}
+                placeholder="Cari cepat (nama atau email)..."
+                className="w-full rounded-xl border border-slate-300 pl-10 pr-3
+                   focus:border-[#004A9F] focus:ring-2 focus:ring-[#004A9F]/30 
+                   shadow-sm py-2 sm:py-3 text-sm sm:text-base"
+              />
+            </div>
+          </div>
+
+          {/* Advanced Filters */}
+          <div className="bg-slate-50/80 border border-slate-200/60 rounded-xl p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <i className="pi pi-filter text-slate-500"></i>
+                <span className="text-sm font-medium text-slate-700">Filter Lanjutan</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  icon="pi pi-filter"
+                  label="Terapkan"
+                  className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white py-2 px-4 text-sm"
+                  onClick={applyFilters}
+                />
+                <Button
+                  icon="pi pi-times"
+                  label="Reset"
+                  severity="secondary"
+                  outlined
+                  className="py-2 px-4 text-sm"
+                  onClick={resetFilters}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Filter Nama */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <i className="pi pi-user mr-2 text-slate-500"></i>
+                  Nama User
+                </label>
+                <InputText
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  placeholder="Cari berdasarkan nama..."
+                  className="w-full rounded-lg border border-slate-300 p-2 text-sm"
+                />
+              </div>
+
+              {/* Filter Email */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <i className="pi pi-envelope mr-2 text-slate-500"></i>
+                  Email
+                </label>
+                <InputText
+                  value={searchEmail}
+                  onChange={(e) => setSearchEmail(e.target.value)}
+                  placeholder="Cari berdasarkan email..."
+                  className="w-full rounded-lg border border-slate-300 p-2 text-sm"
+                />
+              </div>
+
+              {/* Filter Loket (opsional) */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <i className="pi pi-desktop mr-2 text-slate-500"></i>
+                  Loket
+                </label>
+                <MultiSelect
+                  value={selectedCounters}
+                  onChange={(e) => setSelectedCounters(e.value)}
+                  options={countersData.map(counter => ({
+                    label: `${counter.name} (${counter.counter_code})`,
+                    value: counter.id
+                  }))}
+                  placeholder="Pilih loket..."
+                  display="chip"
+                  className="w-full text-sm"
+                  maxSelectedLabels={3}
+                />
+              </div>
+            </div>
+
+            {/* Active Filters Indicator */}
+            {(searchName || searchEmail || selectedCounters.length > 0) && (
+              <div className="mt-3 pt-3 border-t border-slate-200">
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs text-slate-500">Filter aktif:</span>
+                  {searchName && (
+                    <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded">
+                      <i className="pi pi-user text-xs"></i>
+                      Nama: {searchName}
+                      <button
+                        onClick={() => setSearchName("")}
+                        className="text-blue-500 hover:text-blue-700 ml-1">
+                        <i className="pi pi-times text-xs"></i>
+                      </button>
+                    </span>
+                  )}
+                  {searchEmail && (
+                    <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2 py-1 rounded">
+                      <i className="pi pi-envelope text-xs"></i>
+                      Email: {searchEmail}
+                      <button
+                        onClick={() => setSearchEmail("")}
+                        className="text-green-500 hover:text-green-700 ml-1">
+                        <i className="pi pi-times text-xs"></i>
+                      </button>
+                    </span>
+                  )}
+                  {selectedCounters.length > 0 && (
+                    <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-xs px-2 py-1 rounded">
+                      <i className="pi pi-desktop text-xs"></i>
+                      {selectedCounters.length} loket terpilih
+                      <button
+                        onClick={() => setSelectedCounters([])}
+                        className="text-amber-500 hover:text-amber-700 ml-1">
+                        <i className="pi pi-times text-xs"></i>
+                      </button>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -474,6 +666,11 @@ const HomeUserManagement = () => {
           <div className="text-sm text-slate-500">
             Halaman {pagination.current_page} dari {pagination.last_page} •
             Total: {pagination.total} user
+            {filters.search && (
+              <span className="ml-2 text-emerald-600">
+                • Filter: "{filters.search}"
+              </span>
+            )}
           </div>
         </div>
 
@@ -483,25 +680,38 @@ const HomeUserManagement = () => {
               <i className="pi pi-inbox text-slate-400 text-2xl sm:text-3xl" />
             </div>
             <p className="text-lg sm:text-xl font-semibold text-slate-600 mb-2">
-              Belum ada user
+              {filters.search ? "Tidak ditemukan" : "Belum ada user"}
             </p>
             <p className="text-slate-500 max-w-sm mx-auto text-sm sm:text-base">
-              Mulai dengan menambahkan user pertama untuk mengelola sistem
+              {filters.search 
+                ? "Tidak ada user yang sesuai dengan kriteria pencarian"
+                : "Mulai dengan menambahkan user pertama untuk mengelola sistem"}
             </p>
             <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-              <Button
-                icon="pi pi-plus"
-                label="Tambah User Pertama"
-                className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white"
-                onClick={handleNavigateToAddUser}
-              />
-              <Button
-                icon="pi pi-history"
-                label="Cek User Terhapus"
-                outlined
-                className="border-red-500 text-red-500 hover:bg-red-50"
-                onClick={handleNavigateToRestore}
-              />
+              {filters.search ? (
+                <Button
+                  icon="pi pi-times"
+                  label="Hapus Filter"
+                  className="bg-gradient-to-r from-slate-500 to-slate-600 text-white"
+                  onClick={resetFilters}
+                />
+              ) : (
+                <>
+                  <Button
+                    icon="pi pi-plus"
+                    label="Tambah User Pertama"
+                    className="bg-gradient-to-r from-[#004A9F] to-[#0066CC] text-white"
+                    onClick={handleNavigateToAddUser}
+                  />
+                  <Button
+                    icon="pi pi-history"
+                    label="Cek User Terhapus"
+                    outlined
+                    className="border-red-500 text-red-500 hover:bg-red-50"
+                    onClick={handleNavigateToRestore}
+                  />
+                </>
+              )}
             </div>
           </div>
         ) : (

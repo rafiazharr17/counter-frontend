@@ -162,7 +162,34 @@ export default function DetailCounter() {
     };
   }, [stats, isStatsError, processedQueues]);
 
-  const showDeleteDialog = () => setDeleteDialogVisible(true);
+  // Cek apakah ada antrean aktif di loket ini
+  const hasActiveQueues = useMemo(() => {
+    if (!queuesData || !Array.isArray(queuesData)) return false;
+    
+    // Cari antrean dengan status selain 'done' dan 'canceled'
+    const activeQueues = queuesData.filter(queue => {
+      const status = queue.status?.toLowerCase();
+      return status && status !== 'done' && status !== 'canceled';
+    });
+    
+    return activeQueues.length > 0;
+  }, [queuesData]);
+
+  const showDeleteDialog = () => {
+    if (hasActiveQueues) {
+      // Tampilkan notifikasi jika masih ada antrean aktif
+      toast.current.show({
+        severity: "error",
+        summary: "Tidak Dapat Menghapus Loket",
+        detail: `Loket "${counter?.name}" masih memiliki antrean aktif. Harap selesaikan atau batalkan semua antrean terlebih dahulu sebelum menghapus loket.`,
+        life: 6000,
+      });
+      return;
+    }
+    
+    // Jika tidak ada antrean aktif, tampilkan dialog konfirmasi
+    setDeleteDialogVisible(true);
+  };
 
   const handleDeleteCounter = async () => {
     try {

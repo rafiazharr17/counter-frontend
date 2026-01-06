@@ -15,27 +15,16 @@ import DetailUser from "./pages/admin/user_management/DetailUser";
 import EditUser from "./pages/admin/user_management/EditUser";
 import LoketUser from "./pages/admin/user_management/LoketUser";
 
-
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-
 
 import AmbilAntrean from "./pages/guest/AmbilAntrean";
 import DashboardCS from "./pages/cs/DashboardCS";
 import EditCS from "./pages/cs/EditCS";
 import DetailCS from "./pages/cs/DetailCS";
 import DisplayScreen from "./pages/cs/DisplayScreen";
+import AmbilAntreanCS from "./pages/cs/AmbilAntreanCS";
 
-// Placeholders
-function AdminDashboard() {
-  return <div>Dashboard Admin</div>;
-}
-function UsersHome() {
-  return <div>User Management</div>;
-}
-function RolesHome() {
-  return <div>Roles</div>;
-}
 
 export default function App() {
   return (
@@ -61,8 +50,6 @@ export default function App() {
         <Route path="users/:id" element={<DetailUser />} />
         <Route path="users/:id/edit" element={<EditUser />} />
         <Route path="users/:id/loket-management" element={<LoketUser />} />
-        
-        <Route path="roles" element={<RolesHome />} />
       </Route>
 
       {/* CUSTOMER SERVICE */}
@@ -70,6 +57,7 @@ export default function App() {
       <Route path="/cs/counters/:id" element={<DetailCS />} />
       <Route path="/cs/counters/:id/edit" element={<EditCS />} />
       <Route path="/cs/display" element={<DisplayScreen />} />
+      <Route path="/cs/ambil-antrean-cs" element={<AmbilAntreanCS />} />
 
       {/* GUEST */}
       <Route path="/ambil-antrean" element={<AmbilAntrean />} />

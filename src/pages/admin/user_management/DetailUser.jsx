@@ -378,19 +378,6 @@ const DetailUser = () => {
                        text-white px-4 py-2 rounded-lg gap-2 flex-1 sm:flex-none"
               onClick={handleBack}
             />
-            {!isDeleted && (
-              <Button
-                icon="pi pi-cog"
-                label="Kelola"
-                className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 
-                         text-white px-4 py-2 rounded-lg gap-2 flex-1 sm:flex-none"
-                onClick={() =>
-                  document
-                    .getElementById("actionButtons")
-                    .scrollIntoView({ behavior: "smooth" })
-                }
-              />
-            )}
           </div>
         </div>
       </div>

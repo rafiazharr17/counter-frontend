@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { InputText } from "primereact/inputtext";
+import { Dropdown } from "primereact/dropdown";
 import { useGetCountersQuery } from "../../../features/counters/counterApi";
 
 export default function HomeCounter() {
@@ -33,6 +34,27 @@ export default function HomeCounter() {
   } = useGetCountersQuery({ guest: !isAdmin });
 
   const [search, setSearch] = useState("");
+  const [quotaFilter, setQuotaFilter] = useState(null);
+  const [sortBy, setSortBy] = useState("name"); // Default sort by name
+
+  // Filter options for quota
+  const quotaOptions = [
+    { label: "Semua Kuota", value: null },
+    { label: "Kuota Kecil (< 50)", value: "small" },
+    { label: "Kuota Sedang (50-100)", value: "medium" },
+    { label: "Kuota Besar (> 100)", value: "large" },
+    { label: "Tanpa Kuota", value: "unlimited" },
+  ];
+
+  // Sort options
+  const sortOptions = [
+    { label: "Nama A-Z", value: "name" },
+    { label: "Nama Z-A", value: "name_desc" },
+    { label: "Kuota Terkecil", value: "quota_asc" },
+    { label: "Kuota Terbesar", value: "quota_desc" },
+    { label: "Kode A-Z", value: "code" },
+    { label: "Kode Z-A", value: "code_desc" },
+  ];
 
   // Fungsi untuk mendapatkan nomor loket dari counter_code
   const getCounterNumber = (counterCode) => {
@@ -54,14 +76,78 @@ export default function HomeCounter() {
     return counterName;
   };
 
-  // Group counters by nama layanan dan urutkan
+  // Filter dan sort counters
+  const filteredAndSortedCounters = useMemo(() => {
+    let result = [...(counters || [])];
+
+    // Apply search filter
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      result = result.filter(
+        (counter) =>
+          counter.name?.toLowerCase().includes(q) ||
+          counter.counter_code?.toLowerCase().includes(q) ||
+          getServiceName(counter.name)?.toLowerCase().includes(q) ||
+          counter.description?.toLowerCase().includes(q)
+      );
+    }
+
+    // Apply quota filter
+    if (quotaFilter) {
+      switch (quotaFilter) {
+        case "small":
+          result = result.filter(
+            (counter) => counter.quota && counter.quota < 50
+          );
+          break;
+        case "medium":
+          result = result.filter(
+            (counter) =>
+              counter.quota && counter.quota >= 50 && counter.quota <= 100
+          );
+          break;
+        case "large":
+          result = result.filter(
+            (counter) => counter.quota && counter.quota > 100
+          );
+          break;
+        case "unlimited":
+          result = result.filter((counter) => !counter.quota);
+          break;
+      }
+    }
+
+    // Apply sorting
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case "name":
+          return (a.name || "").localeCompare(b.name || "", "id");
+        case "name_desc":
+          return (b.name || "").localeCompare(a.name || "", "id");
+        case "quota_asc":
+          return (a.quota || 0) - (b.quota || 0);
+        case "quota_desc":
+          return (b.quota || 0) - (a.quota || 0);
+        case "code":
+          return (a.counter_code || "").localeCompare(b.counter_code || "", "id");
+        case "code_desc":
+          return (b.counter_code || "").localeCompare(a.counter_code || "", "id");
+        default:
+          return 0;
+      }
+    });
+
+    return result;
+  }, [counters, search, quotaFilter, sortBy]);
+
+  // Group counters by nama layanan dan urutkan (untuk tampilan normal)
   const groupedCounters = useMemo(() => {
-    if (!counters.length) return [];
+    if (!filteredAndSortedCounters.length) return {};
 
     // Buat map untuk grouping berdasarkan nama layanan
     const groups = {};
 
-    counters.forEach((counter) => {
+    filteredAndSortedCounters.forEach((counter) => {
       const serviceName = getServiceName(counter.name);
       if (!groups[serviceName]) {
         groups[serviceName] = [];
@@ -71,49 +157,44 @@ export default function HomeCounter() {
 
     // Urutkan groups berdasarkan nama layanan
     const sortedGroups = Object.keys(groups)
-      .sort((a, b) => a.localeCompare(b, "id")) // Urutkan berdasarkan abjad Indonesia
+      .sort((a, b) => a.localeCompare(b, "id"))
       .reduce((acc, key) => {
         acc[key] = groups[key];
         return acc;
       }, {});
 
-    // Urutkan counters dalam setiap group berdasarkan nomor loket
-    Object.keys(sortedGroups).forEach((serviceName) => {
-      sortedGroups[serviceName].sort((a, b) => {
-        const numA = parseInt(getCounterNumber(a.counter_code)) || 0;
-        const numB = parseInt(getCounterNumber(b.counter_code)) || 0;
-        return numA - numB;
-      });
-    });
-
     return sortedGroups;
-  }, [counters]);
-
-  // Flat array untuk search dan stats (tetap urut)
-  const sortedCounters = useMemo(() => {
-    const result = [];
-    Object.keys(groupedCounters).forEach((serviceName) => {
-      result.push(...groupedCounters[serviceName]);
-    });
-    return result;
-  }, [groupedCounters]);
-
-  const filteredCounters = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return sortedCounters;
-
-    return sortedCounters.filter(
-      (c) =>
-        c.name?.toLowerCase().includes(q) ||
-        c.counter_code?.toLowerCase().includes(q) ||
-        getServiceName(c.name)?.toLowerCase().includes(q)
-    );
-  }, [sortedCounters, search]);
+  }, [filteredAndSortedCounters]);
 
   // Hitung total jenis layanan (nama layanan yang unik)
   const totalJenisLayanan = useMemo(() => {
     return Object.keys(groupedCounters).length;
   }, [groupedCounters]);
+
+  // Hitung statistik kuota
+  const quotaStats = useMemo(() => {
+    const stats = {
+      total: filteredAndSortedCounters.length,
+      small: 0,
+      medium: 0,
+      large: 0,
+      unlimited: 0,
+    };
+
+    filteredAndSortedCounters.forEach((counter) => {
+      if (!counter.quota) {
+        stats.unlimited++;
+      } else if (counter.quota < 50) {
+        stats.small++;
+      } else if (counter.quota <= 100) {
+        stats.medium++;
+      } else {
+        stats.large++;
+      }
+    });
+
+    return stats;
+  }, [filteredAndSortedCounters]);
 
   const CardSkeleton = () => (
     <div className="bg-gradient-to-br from-white to-slate-50 border-2 border-slate-100 rounded-2xl p-4 sm:p-5 shadow-sm animate-pulse">
@@ -178,40 +259,138 @@ export default function HomeCounter() {
           </div>
         </div>
 
-        {/* Search Section */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="relative flex-1 min-w-0">
-            <i className="pi pi-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-            <InputText
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari loket..."
-              className="w-full rounded-xl border border-slate-300 pl-10 pr-3
-                 focus:border-[#004A9F] focus:ring-2 focus:ring-[#004A9F]/30 
-                 shadow-sm py-2 sm:py-3 text-sm sm:text-base"
-            />
+        {/* Filter Section */}
+        <div className="space-y-4">
+          {/* Search Bar */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1 min-w-0">
+              <i className="pi pi-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+              <InputText
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Cari nama, kode, atau deskripsi loket..."
+                className="w-full rounded-xl border border-slate-300 pl-10 pr-3
+                   focus:border-[#004A9F] focus:ring-2 focus:ring-[#004A9F]/30 
+                   shadow-sm py-2 sm:py-3 text-sm sm:text-base"
+              />
+            </div>
           </div>
 
-          {/* Info Stats - IMPROVED RESPONSIVE */}
-          <div className="flex items-center justify-between sm:justify-center gap-3 sm:gap-4 text-sm text-slate-600 bg-slate-50/80 rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 border border-slate-200/60 min-w-0 flex-1 sm:flex-none">
-            <div className="text-center flex-1 sm:flex-none">
-              <div className="font-bold text-slate-800 text-sm sm:text-base">
-                {sortedCounters.length}
-              </div>
-              <div className="text-xs text-slate-500 whitespace-nowrap">
-                Total Loket
-              </div>
+          {/* Filter Controls */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Filter by Quota */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Filter Kuota
+              </label>
+              <Dropdown
+                value={quotaFilter}
+                onChange={(e) => setQuotaFilter(e.value)}
+                options={quotaOptions}
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Pilih filter kuota"
+                className="w-full rounded-xl border-slate-300"
+              />
             </div>
-            <div className="h-4 sm:h-6 w-px bg-slate-300 flex-shrink-0"></div>
-            <div className="text-center flex-1 sm:flex-none">
-              <div className="font-bold text-slate-800 text-sm sm:text-base">
-                {totalJenisLayanan}
-              </div>
-              <div className="text-xs text-slate-500 whitespace-nowrap">
-                Jenis Layanan
+
+            {/* Sort By */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Urutkan Berdasarkan
+              </label>
+              <Dropdown
+                value={sortBy}
+                onChange={(e) => setSortBy(e.value)}
+                options={sortOptions}
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Urutkan"
+                className="w-full rounded-xl border-slate-300"
+              />
+            </div>
+
+            {/* Info Stats */}
+            <div className="flex flex-col justify-end">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50/80 rounded-xl p-3 border border-slate-200/60">
+                <div className="text-center">
+                  <div className="font-bold text-slate-800 text-sm">
+                    {filteredAndSortedCounters.length}
+                  </div>
+                  <div className="text-xs text-slate-500">Total</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-emerald-600 text-sm">
+                    {quotaStats.small}
+                  </div>
+                  <div className="text-xs text-slate-500">Kecil</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-blue-600 text-sm">
+                    {quotaStats.medium}
+                  </div>
+                  <div className="text-xs text-slate-500">Sedang</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-amber-600 text-sm">
+                    {quotaStats.large}
+                  </div>
+                  <div className="text-xs text-slate-500">Besar</div>
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Active Filters */}
+          {(search || quotaFilter || sortBy !== "name") && (
+            <div className="flex flex-wrap items-center gap-2 p-3 bg-blue-50 rounded-xl border border-blue-100">
+              <span className="text-sm text-blue-700 font-medium">
+                Filter Aktif:
+              </span>
+              {search && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                  <i className="pi pi-search text-xs" />
+                  {search}
+                  <button
+                    onClick={() => setSearch("")}
+                    className="ml-1 text-blue-500 hover:text-blue-700">
+                    <i className="pi pi-times text-xs" />
+                  </button>
+                </span>
+              )}
+              {quotaFilter && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                  <i className="pi pi-filter text-xs" />
+                  {quotaOptions.find((opt) => opt.value === quotaFilter)?.label}
+                  <button
+                    onClick={() => setQuotaFilter(null)}
+                    className="ml-1 text-blue-500 hover:text-blue-700">
+                    <i className="pi pi-times text-xs" />
+                  </button>
+                </span>
+              )}
+              {sortBy !== "name" && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                  <i className="pi pi-sort-alt text-xs" />
+                  {sortOptions.find((opt) => opt.value === sortBy)?.label}
+                  <button
+                    onClick={() => setSortBy("name")}
+                    className="ml-1 text-blue-500 hover:text-blue-700">
+                    <i className="pi pi-times text-xs" />
+                  </button>
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setSearch("");
+                  setQuotaFilter(null);
+                  setSortBy("name");
+                }}
+                className="ml-auto text-sm text-blue-600 hover:text-blue-800 font-medium">
+                Hapus Semua Filter
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -250,22 +429,22 @@ export default function HomeCounter() {
       )}
 
       {/* Empty State */}
-      {!isLoading && filteredCounters.length === 0 && (
+      {!isLoading && filteredAndSortedCounters.length === 0 && (
         <div className="border-2 border-dashed border-slate-200 bg-gradient-to-br from-white to-slate-50/80 rounded-2xl p-6 sm:p-8 md:p-12 text-center text-slate-500 backdrop-blur-sm">
           <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3 sm:mb-4">
             <i className="pi pi-inbox text-slate-400 text-2xl sm:text-3xl" />
           </div>
           <p className="text-lg sm:text-xl font-semibold text-slate-600 mb-2">
-            {sortedCounters.length === 0
+            {counters.length === 0
               ? "Belum ada loket"
-              : "Tidak ada hasil"}
+              : "Tidak ada hasil untuk filter ini"}
           </p>
           <p className="text-slate-500 max-w-sm mx-auto text-sm sm:text-base">
-            {sortedCounters.length === 0
+            {counters.length === 0
               ? "Mulai dengan menambahkan loket pertama untuk melayani pengunjung"
-              : "Coba ubah kata kunci pencarian atau filter yang berbeda"}
+              : "Coba ubah filter pencarian atau hapus beberapa filter"}
           </p>
-          {sortedCounters.length === 0 && (
+          {counters.length === 0 && (
             <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
               <Button
                 icon="pi pi-plus"
@@ -287,13 +466,13 @@ export default function HomeCounter() {
         </div>
       )}
 
-      {/* Counter Grid - GROUPED BY SERVICE NAME (SAMA SEPERTI DASHBOARDCS) */}
-      {!isLoading && filteredCounters.length > 0 && (
+      {/* Counter Grid - GROUPED BY SERVICE NAME */}
+      {!isLoading && filteredAndSortedCounters.length > 0 && (
         <div className="space-y-6">
-          {/* Jika ada search, tampilkan semua dalam satu grid */}
-          {search ? (
+          {/* Jika ada filter aktif selain search, tampilkan semua dalam satu grid tanpa grouping */}
+          {quotaFilter || sortBy !== "name" ? (
             <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-              {filteredCounters.map((counter) => (
+              {filteredAndSortedCounters.map((counter) => (
                 <CounterCard
                   key={counter.id}
                   counter={counter}
@@ -303,7 +482,7 @@ export default function HomeCounter() {
               ))}
             </div>
           ) : (
-            /* Jika tidak ada search, tampilkan grouped by service name */
+            /* Jika tidak ada filter khusus, tampilkan grouped by service name */
             Object.keys(groupedCounters).map((serviceName) => (
               <div key={serviceName}>
                 <GroupHeader
@@ -327,7 +506,7 @@ export default function HomeCounter() {
       )}
 
       {/* Footer Info */}
-      {!isLoading && filteredCounters.length > 0 && isAdmin && (
+      {!isLoading && filteredAndSortedCounters.length > 0 && isAdmin && (
         <div className="text-center text-slate-500 text-sm mt-8">
           <p>
             Menemukan masalah?{" "}
@@ -344,8 +523,23 @@ export default function HomeCounter() {
   );
 }
 
-// Komponen terpisah untuk Counter Card (SAMA SEPERTI DASHBOARDCS)
+// Komponen terpisah untuk Counter Card
 const CounterCard = ({ counter, navigate, getCounterNumber }) => {
+  // Tentukan badge warna berdasarkan kuota
+  const getQuotaBadgeColor = (quota) => {
+    if (!quota) return "bg-blue-100 text-blue-700";
+    if (quota < 50) return "bg-emerald-100 text-emerald-700";
+    if (quota <= 100) return "bg-blue-100 text-blue-700";
+    return "bg-amber-100 text-amber-700";
+  };
+
+  const getQuotaLabel = (quota) => {
+    if (!quota) return "Tanpa Kuota";
+    if (quota < 50) return "Kecil";
+    if (quota <= 100) return "Sedang";
+    return "Besar";
+  };
+
   return (
     <div
       onClick={() => navigate(`/admin/counters/${counter.id}`)}
@@ -367,6 +561,12 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
           <span className="px-2 py-1 text-xs font-bold rounded-full bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-sm shadow-blue-200 whitespace-nowrap">
             Loket {getCounterNumber(counter.counter_code)}
           </span>
+          <span
+            className={`px-2 py-1 text-xs font-semibold rounded-full ${getQuotaBadgeColor(
+              counter.quota
+            )}`}>
+            {getQuotaLabel(counter.quota)}
+          </span>
         </div>
       </div>
 
@@ -378,7 +578,7 @@ const CounterCard = ({ counter, navigate, getCounterNumber }) => {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-700 truncate">
-              {counter.quota} / hari
+              {counter.quota ? `${counter.quota} / hari` : "Tanpa Batas"}
             </p>
             <p className="text-xs text-slate-500">Kuota layanan</p>
           </div>
